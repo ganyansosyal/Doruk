@@ -97,8 +97,8 @@ class _DepremPageState extends State<DepremPage> {
             if (big.isNotEmpty) _alert(big.first),
             const SizedBox(height: 4),
             Wrap(spacing: 8, children: [
-              for (final e in const {0.0: 'Hepsi', 2.0: 'M2+', 3.0: 'M3+', 4.0: 'M4+', 5.0: 'M5+'}.entries)
-                ChoiceChip(label: Text(e.value), selected: _min == e.key, onSelected: (_) => setState(() => _min = e.key)),
+              for (final e in const [(0.0, 'Hepsi'), (2.0, 'M2+'), (3.0, 'M3+'), (4.0, 'M4+'), (5.0, 'M5+')])
+                ChoiceChip(label: Text(e.$2), selected: _min == e.$1, onSelected: (_) => setState(() => _min = e.$1)),
             ]),
             const SizedBox(height: 8),
             if (filtered.isEmpty)
