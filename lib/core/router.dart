@@ -3,7 +3,6 @@ import 'package:go_router/go_router.dart';
 import '../pages/home_page.dart';
 import '../pages/market_page.dart';
 import '../pages/doviz_page.dart';
-import '../pages/more_page.dart';
 import '../pages/placeholder_page.dart';
 import '../pages/analiz_page.dart';
 import '../pages/rsi_page.dart';
@@ -57,28 +56,23 @@ class _Shell extends StatelessWidget {
   final String location;
   const _Shell({required this.child, required this.location});
 
-  static const _tabs = ['/', '/market', '/doviz', '/more'];
-
   @override
   Widget build(BuildContext context) {
-    var idx = _tabs.indexOf(location);
-    if (idx < 0) idx = 3;
-    return Scaffold(
-      body: SafeArea(
-        child: Column(children: [
-          const KrediSeridi(),
-          Expanded(child: child),
-        ]),
-      ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: idx,
-        onDestinationSelected: (i) => context.go(_tabs[i]),
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.home_outlined), label: 'Ana Sayfa'),
-          NavigationDestination(icon: Icon(Icons.candlestick_chart_outlined), label: 'Market'),
-          NavigationDestination(icon: Icon(Icons.currency_exchange), label: 'Döviz'),
-          NavigationDestination(icon: Icon(Icons.apps), label: 'Daha Fazla'),
-        ],
+    final anaSayfa = location == '/';
+    // Alt menü yok: ana sayfa modül ızgarası. Geri tuşu alt sayfalardan ana sayfaya döner.
+    return PopScope(
+      canPop: anaSayfa,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) context.go('/');
+      },
+      child: Scaffold(
+        body: SafeArea(
+          child: Column(children: [
+            anaSayfa ? const AnaBaslik() : const KrediSeridi(),
+            Expanded(child: child),
+          ]),
+        ),
+        floatingActionButton: const SohbetButonu(),
       ),
     );
   }
@@ -100,8 +94,11 @@ final appRouter = GoRouter(
       routes: [
         GoRoute(path: '/', builder: (c, s) => const HomePage()),
         GoRoute(path: '/market', builder: (c, s) => const MarketPage()),
-        GoRoute(path: '/doviz', builder: (c, s) => KrediKapisi(sayfa: 'doviz', builder: () => const DovizPage())),
-        GoRoute(path: '/more', builder: (c, s) => const MorePage()),
+        GoRoute(path: '/doviz', builder: (c, s) => KrediKapisi(sayfa: 'doviz', builder: () => Scaffold(
+              appBar: AppBar(title: const Text('Döviz Çevir'), leading: BackButton(onPressed: () => c.go('/'))),
+              body: const DovizPage(),
+            ))),
+        GoRoute(path: '/more', redirect: (c, s) => '/'),
         for (final e in modules.entries)
           GoRoute(
             path: '/${e.key}',
