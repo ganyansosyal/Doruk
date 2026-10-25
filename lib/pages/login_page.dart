@@ -26,6 +26,8 @@ class _LoginPageState extends State<LoginPage> {
   void initState() {
     super.initState();
     _err = AuthService.notice.value;
+    _kayitModu = AuthService.kayitModuIstek;
+    AuthService.kayitModuIstek = false;
   }
 
   @override
@@ -68,6 +70,13 @@ class _LoginPageState extends State<LoginPage> {
     final e2 = await AuthService.giris(_kKul.text, _kSifre.text);
     if (!mounted) return;
     setState(() { _busy = false; _ok = ''; _err = e2 ?? ''; });
+  }
+
+  Future<void> _misafir() async {
+    setState(() { _busy = true; _err = ''; _ok = ''; });
+    final err = await AuthService.misafirGiris();
+    if (!mounted) return;
+    setState(() { _busy = false; _err = err ?? ''; });
   }
 
   Future<void> _unuttum() async {
@@ -166,6 +175,8 @@ class _LoginPageState extends State<LoginPage> {
         FilledButton(onPressed: _busy ? null : _giris, child: Text(_busy ? 'GİRİŞ YAPILIYOR...' : 'GİRİŞ YAP')),
         const SizedBox(height: 10),
         Center(child: TextButton(onPressed: _busy ? null : _unuttum, child: const Text('Şifremi Unuttum'))),
+        const SizedBox(height: 4),
+        OutlinedButton(onPressed: _busy ? null : _misafir, child: const Text('MİSAFİR OLARAK DEVAM ET (25 kredi)')),
       ];
 
   List<Widget> _kayitForm() => [
