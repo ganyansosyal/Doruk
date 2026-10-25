@@ -29,3 +29,6 @@ FirebaseDatabase db() => FirebaseDatabase.instanceFor(
       app: Firebase.app(),
       databaseURL: 'https://doruk-sohbet-default-rtdb.firebaseio.com',
     );
+
+/// Web'deki anahtar temizleme: . # $ / [ ] → _
+String fbKey(String s) => s.toLowerCase().replaceAll(RegExp(r'[.#$/\[\]]'), '_');
