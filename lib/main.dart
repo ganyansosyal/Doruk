@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'core/firebase_init.dart';
 import 'core/router.dart';
 import 'core/theme.dart';
+import 'services/auth_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initFirebase();
+  await AuthService.load(); // kayıtlı oturumu oku
   runApp(const DorukApp());
 }
 
