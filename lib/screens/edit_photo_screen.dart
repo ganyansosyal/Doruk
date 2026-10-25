@@ -1,5 +1,8 @@
+import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:gal/gal.dart';
@@ -23,6 +26,73 @@ const List<_CropItem> _crops = [
   _CropItem('9:16', 9 / 16),
 ];
 
+class _FrameItem {
+  final String name;
+  final Color color;
+  final double pad; // kısa kenarın oranı
+  final bool square; // 1:1 Instagram tarzı
+  const _FrameItem(this.name, this.color, this.pad, this.square);
+}
+
+const List<_FrameItem> _frames = [
+  _FrameItem('Yok', Colors.white, 0, false),
+  _FrameItem('İnce beyaz', Colors.white, 0.02, false),
+  _FrameItem('Kalın beyaz', Colors.white, 0.06, false),
+  _FrameItem('Siyah', Colors.black, 0.04, false),
+  _FrameItem('1:1 Beyaz', Colors.white, 0.04, true),
+  _FrameItem('1:1 Siyah', Colors.black, 0.04, true),
+];
+
+const List<String> _fontNames = ['Normal', 'Serif', 'Mono', 'El yazısı'];
+const List<String?> _fontFamilies = [null, 'serif', 'monospace', 'cursive'];
+
+const List<Color> _palette = [
+  Colors.white,
+  Colors.black,
+  Color(0xFFFFC107),
+  Color(0xFFEF4444),
+  Color(0xFF22C55E),
+  Color(0xFF3B82F6),
+  Color(0xFF8B5CF6),
+  Color(0xFFEC4899),
+];
+
+// Fotoğrafın üstündeki bir yazı. x, y: 0..1 arası konum.
+class _TextItem {
+  final String text;
+  final Color color;
+  final int font;
+  final double x;
+  final double y;
+  final double size; // genişliğin oranı
+  const _TextItem({
+    required this.text,
+    this.color = Colors.white,
+    this.font = 0,
+    this.x = 0.5,
+    this.y = 0.5,
+    this.size = 0.08,
+  });
+
+  _TextItem copyWith({
+    String? text,
+    Color? color,
+    int? font,
+    double? x,
+    double? y,
+    double? size,
+  }) {
+    return _TextItem(
+      text: text ?? this.text,
+      color: color ?? this.color,
+      font: font ?? this.font,
+      x: x ?? this.x,
+      y: y ?? this.y,
+      size: size ?? this.size,
+    );
+  }
+}
+
 // Tüm ayarlar tek yerde. 0 = değişiklik yok.
 class _Adj {
   final double bright; // -100..100
@@ -30,6 +100,10 @@ class _Adj {
   final double sat; // -100..100
   final double warm; // -100..100
   final double vignette; // 0..100
+  final double sharp; // 0..100 keskinlik
+  final double shadow; // -100..100 gölge
+  final double highlight; // -100..100 parlak alan
+  final double fi; // 0..100 filtre yoğunluğu
   final double blur; // 0..100
   final double focus; // 0..100 (odak alanı büyüklüğü)
   final double fx; // -1..1 odak noktası
@@ -40,6 +114,10 @@ class _Adj {
     this.sat = 0,
     this.warm = 0,
     this.vignette = 0,
+    this.sharp = 0,
+    this.shadow = 0,
+    this.highlight = 0,
+    this.fi = 100,
     this.blur = 0,
     this.focus = 50,
     this.fx = 0,
@@ -52,6 +130,10 @@ class _Adj {
     double? sat,
     double? warm,
     double? vignette,
+    double? sharp,
+    double? shadow,
+    double? highlight,
+    double? fi,
     double? blur,
     double? focus,
     double? fx,
@@ -63,6 +145,10 @@ class _Adj {
       sat: sat ?? this.sat,
       warm: warm ?? this.warm,
       vignette: vignette ?? this.vignette,
+      sharp: sharp ?? this.sharp,
+      shadow: shadow ?? this.shadow,
+      highlight: highlight ?? this.highlight,
+      fi: fi ?? this.fi,
       blur: blur ?? this.blur,
       focus: focus ?? this.focus,
       fx: fx ?? this.fx,
@@ -70,6 +156,29 @@ class _Adj {
     );
   }
 }
+
+// Geri al / ileri al için tüm durumun kopyası.
+class _Snap {
+  final _Adj adj;
+  final int filter;
+  final int turns;
+  final int crop;
+  final int frame;
+  final Rect cropN;
+  final double? lock;
+  final bool fh;
+  final bool fv;
+  final List<_TextItem> texts;
+  const _Snap(this.adj, this.filter, this.turns, this.crop, this.frame,
+      this.cropN, this.lock, this.fh, this.fv, this.texts);
+}
+
+const List<double> _idM = [
+  1, 0, 0, 0, 0, //
+  0, 1, 0, 0, 0,
+  0, 0, 1, 0, 0,
+  0, 0, 0, 1, 0,
+];
 
 List<double> _mulM(List<double> a, List<double> b) {
   final out = List<double>.filled(20, 0);
@@ -99,6 +208,44 @@ List<double> _satM(double s) {
 double _cl(double v, double lo, double hi) => v < lo ? lo : (v > hi ? hi : v);
 
 const Rect _fullRect = Rect.fromLTRB(0, 0, 1, 1);
+
+// Keskinlik + gölge + parlak alan. Arka planda (isolate) çalışır.
+// a: [rgba bytes, genişlik, yükseklik, keskinlik, gölge, parlak alan]
+Uint8List _process(List<Object> a) {
+  final src = a[0] as Uint8List;
+  final w = a[1] as int;
+  final h = a[2] as int;
+  final k = (a[3] as double) / 100;
+  final sh = (a[4] as double) / 100;
+  final hi = (a[5] as double) / 100;
+  final out = Uint8List(src.length);
+  final stride = w * 4;
+  for (var y = 0; y < h; y++) {
+    for (var x = 0; x < w; x++) {
+      final i = y * stride + x * 4;
+      final inner = k > 0 && x > 0 && y > 0 && x < w - 1 && y < h - 1;
+      final lum =
+          (src[i] * 0.2126 + src[i + 1] * 0.7152 + src[i + 2] * 0.0722) / 255;
+      final ds = 1 - lum;
+      final add = sh * ds * ds * 70 + hi * lum * lum * 70;
+      for (var c = 0; c < 3; c++) {
+        var v = src[i + c].toDouble();
+        if (inner) {
+          v = v * (1 + 4 * k) -
+              k *
+                  (src[i + c - 4] +
+                      src[i + c + 4] +
+                      src[i + c - stride] +
+                      src[i + c + stride]);
+        }
+        v += add;
+        out[i + c] = v < 0 ? 0 : (v > 255 ? 255 : v.round());
+      }
+      out[i + 3] = src[i + 3];
+    }
+  }
+  return out;
+}
 
 class _CropPainter extends CustomPainter {
   final ValueNotifier<Rect> n;
@@ -148,18 +295,37 @@ class EditPhotoScreen extends StatefulWidget {
 
 class _EditPhotoScreenState extends State<EditPhotoScreen> {
   int _filter = 0;
-  int _mode = 0; // 0 filtre, 1 ayarlar, 2 kırp, 3 portre
+  // 0 filtre, 1 ayarlar, 2 kırp, 3 portre, 4 çerçeve, 5 yazı
+  int _mode = 0;
   int _crop = 0;
+  int _frame = 0;
   bool _saving = false;
   int _turns = 0;
+  bool _fh = false; // ayna (yatay çevir)
+  bool _fv = false; // dikey çevir
   final GlobalKey _key = GlobalKey();
   final ValueNotifier<_Adj> _adj = ValueNotifier<_Adj>(const _Adj());
   final ValueNotifier<Rect> _cropN = ValueNotifier<Rect>(_fullRect);
+  final ValueNotifier<List<_TextItem>> _txt =
+      ValueNotifier<List<_TextItem>>(const <_TextItem>[]);
+  final ValueNotifier<bool> _orig = ValueNotifier<bool>(false);
+  final ValueNotifier<int> _histV = ValueNotifier<int>(0);
+  final TextEditingController _tc = TextEditingController();
+  final List<_Snap> _undo = [];
+  final List<_Snap> _redo = [];
+  int _sel = -1; // seçili yazı
   double? _aspect; // fotoğrafın en/boy oranı (döndürmeden)
   double? _lock; // kırpma oranı kilidi (null = serbest)
   Size? _boxSize;
   int _drag = -1;
   bool _built = false;
+
+  // Keskinlik / gölge / parlak alan için işlenmiş önizleme
+  ui.Image? _procImg;
+  Uint8List? _base;
+  int _bw = 0;
+  int _bh = 0;
+  int _procId = 0;
 
   double? get _rotAspect {
     final a = _aspect;
@@ -185,10 +351,98 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
   void dispose() {
     _adj.dispose();
     _cropN.dispose();
+    _txt.dispose();
+    _orig.dispose();
+    _histV.dispose();
+    _tc.dispose();
     super.dispose();
   }
 
-  // Filtre + ayarlar tek renk matrisinde birleşir.
+  // ---- Geri al / ileri al ----
+  _Snap _snap() => _Snap(_adj.value, _filter, _turns, _crop, _frame,
+      _cropN.value, _lock, _fh, _fv, _txt.value);
+
+  void _checkpoint() {
+    _undo.add(_snap());
+    if (_undo.length > 40) _undo.removeAt(0);
+    _redo.clear();
+    _histV.value++;
+  }
+
+  void _restore(_Snap s) {
+    setState(() {
+      _filter = s.filter;
+      _turns = s.turns;
+      _crop = s.crop;
+      _frame = s.frame;
+      _lock = s.lock;
+      _fh = s.fh;
+      _fv = s.fv;
+      _sel = -1;
+    });
+    _adj.value = s.adj;
+    _cropN.value = s.cropN;
+    _txt.value = s.texts;
+    _tc.clear();
+    _runProc();
+  }
+
+  void _undoDo() {
+    if (_undo.isEmpty) return;
+    _redo.add(_snap());
+    _restore(_undo.removeLast());
+    _histV.value++;
+  }
+
+  void _redoDo() {
+    if (_redo.isEmpty) return;
+    _undo.add(_snap());
+    _restore(_redo.removeLast());
+    _histV.value++;
+  }
+
+  // ---- Keskinlik / gölge / parlak alan işleme ----
+  Future<void> _runProc() async {
+    final a = _adj.value;
+    final id = ++_procId;
+    if (a.sharp == 0 && a.shadow == 0 && a.highlight == 0) {
+      if (_procImg != null && mounted) setState(() => _procImg = null);
+      return;
+    }
+    try {
+      if (_base == null) {
+        final bytes = await File(widget.path).readAsBytes();
+        final codec = await ui.instantiateImageCodec(bytes, targetWidth: 1600);
+        final frame = await codec.getNextFrame();
+        final img = frame.image;
+        final data = await img.toByteData(format: ui.ImageByteFormat.rawRgba);
+        _bw = img.width;
+        _bh = img.height;
+        img.dispose();
+        codec.dispose();
+        _base = data!.buffer.asUint8List();
+      }
+      final out = await compute(_process, <Object>[
+        _base!,
+        _bw,
+        _bh,
+        a.sharp,
+        a.shadow,
+        a.highlight,
+      ]);
+      if (id != _procId || !mounted) return;
+      final c = Completer<ui.Image>();
+      ui.decodeImageFromPixels(
+          out, _bw, _bh, ui.PixelFormat.rgba8888, c.complete);
+      final im = await c.future;
+      if (id != _procId || !mounted) return;
+      setState(() => _procImg = im);
+    } catch (e) {
+      // işleme başarısız olursa orijinal görüntü kalır
+    }
+  }
+
+  // Filtre (yoğunluğa göre) + ayarlar tek renk matrisinde birleşir.
   List<double> _matrix(_Adj a) {
     final c = 1 + a.contrast / 200;
     final o = a.bright * 0.6 + 128 * (1 - c);
@@ -206,7 +460,10 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
       0, 0, 0, 1, 0,
     ];
     final s = _satM(1 + a.sat / 100);
-    return _mulM(cb, _mulM(s, _mulM(temp, photoFilters[_filter].matrix)));
+    final f = photoFilters[_filter].matrix;
+    final t = a.fi / 100;
+    final fm = List<double>.generate(20, (i) => _idM[i] + (f[i] - _idM[i]) * t);
+    return _mulM(cb, _mulM(s, _mulM(temp, fm)));
   }
 
   Widget _framed(_Adj a, int cacheW, Rect r, BoxConstraints cons) {
@@ -232,13 +489,21 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
     final iw = dw / r.width;
     final ih = dh / r.height;
     final odd = _turns.isOdd;
-    final img = Image.file(
-      File(widget.path),
-      cacheWidth: cacheW,
-      width: odd ? ih : iw,
-      height: odd ? iw : ih,
-      fit: BoxFit.fill,
-    );
+    final proc = _procImg;
+    final Widget img = proc != null
+        ? RawImage(
+            image: proc,
+            width: odd ? ih : iw,
+            height: odd ? iw : ih,
+            fit: BoxFit.fill,
+          )
+        : Image.file(
+            File(widget.path),
+            cacheWidth: cacheW,
+            width: odd ? ih : iw,
+            height: odd ? iw : ih,
+            fit: BoxFit.fill,
+          );
     return SizedBox(
       width: dw,
       height: dh,
@@ -263,6 +528,13 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
 
   Widget _composed(_Adj a, BoxConstraints cons) {
     final r = _cropN.value;
+    final fr = _frames[_frame];
+    final short =
+        cons.maxWidth < cons.maxHeight ? cons.maxWidth : cons.maxHeight;
+    final pad = fr.pad * short;
+    final BoxConstraints inner = fr.square
+        ? BoxConstraints.loose(Size(short - 2 * pad, short - 2 * pad))
+        : cons.deflate(EdgeInsets.all(pad));
     final sharpW = _cl(1600 / r.width, 1600, 3000).round();
     Widget content;
     if (a.blur > 0) {
@@ -272,7 +544,7 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
         children: [
           ImageFiltered(
             imageFilter: ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
-            child: _framed(a, 600, r, cons),
+            child: _framed(a, 600, r, inner),
           ),
           ShaderMask(
             blendMode: BlendMode.dstIn,
@@ -282,12 +554,15 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
               colors: const [Colors.black, Colors.black, Color(0x00000000)],
               stops: const [0.0, 0.6, 1.0],
             ).createShader(rect),
-            child: _framed(a, sharpW, r, cons),
+            child: _framed(a, sharpW, r, inner),
           ),
         ],
       );
     } else {
-      content = _framed(a, sharpW, r, cons);
+      content = _framed(a, sharpW, r, inner);
+    }
+    if (_fh || _fv) {
+      content = Transform.flip(flipX: _fh, flipY: _fv, child: content);
     }
     if (a.vignette > 0) {
       content = Stack(
@@ -312,6 +587,57 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
         ],
       );
     }
+    if (fr.pad > 0) {
+      if (fr.square) {
+        content = Container(
+          width: short,
+          height: short,
+          color: fr.color,
+          alignment: Alignment.center,
+          child: content,
+        );
+      } else {
+        content = Container(
+          color: fr.color,
+          padding: EdgeInsets.all(pad),
+          child: content,
+        );
+      }
+    }
+    final texts = _txt.value;
+    if (texts.isNotEmpty) {
+      content = Stack(
+        children: [
+          content,
+          Positioned.fill(
+            child: IgnorePointer(
+              child: LayoutBuilder(
+                builder: (context, bc) {
+                  return Stack(
+                    children: [
+                      for (final t in texts)
+                        if (t.text.isNotEmpty)
+                          Align(
+                            alignment: Alignment(t.x * 2 - 1, t.y * 2 - 1),
+                            child: Text(
+                              t.text,
+                              style: TextStyle(
+                                color: t.color,
+                                fontFamily: _fontFamilies[t.font],
+                                fontSize: t.size * bc.maxWidth,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ),
+        ],
+      );
+    }
     return content;
   }
 
@@ -323,10 +649,23 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
     _adj.value = _adj.value.copyWith(fx: x, fy: y);
   }
 
+  void _moveText(Offset p) {
+    final size = _key.currentContext?.size;
+    if (size == null || size.width == 0 || size.height == 0) return;
+    final list = _txt.value;
+    if (_sel < 0 || _sel >= list.length) return;
+    final x = _cl(p.dx / size.width, 0, 1);
+    final y = _cl(p.dy / size.height, 0, 1);
+    final l = List<_TextItem>.of(list);
+    l[_sel] = l[_sel].copyWith(x: x, y: y);
+    _txt.value = l;
+  }
+
   // ---- Kırpma ----
   void _pickCrop(int i) {
     final item = _crops[i];
     final A = _rotAspect;
+    _checkpoint();
     setState(() {
       _crop = i;
       if (item.name == 'Orijinal') {
@@ -366,12 +705,16 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
     for (var i = 0; i < 4; i++) {
       if ((corners[i] - p).distance < 40) {
         _drag = i;
+        _checkpoint();
         return;
       }
     }
     final px = Rect.fromLTRB(r.left * s.width, r.top * s.height,
         r.right * s.width, r.bottom * s.height);
-    if (px.contains(p)) _drag = 4;
+    if (px.contains(p)) {
+      _drag = 4;
+      _checkpoint();
+    }
   }
 
   void _cropMove(DragUpdateDetails d) {
@@ -445,14 +788,27 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
     return LayoutBuilder(
       builder: (context, cons) {
         if (_mode == 2 && _aspect != null) return _cropEditor(cons);
+        final void Function(Offset)? tap =
+            _mode == 3 ? _setFocus : (_mode == 5 ? _moveText : null);
         return GestureDetector(
-          onTapDown: _mode == 3 ? (d) => _setFocus(d.localPosition) : null,
-          onPanUpdate: _mode == 3 ? (d) => _setFocus(d.localPosition) : null,
+          onTapDown: tap == null
+              ? null
+              : (d) {
+                  _checkpoint();
+                  tap(d.localPosition);
+                },
+          onPanStart: tap == null ? null : (d) => _checkpoint(),
+          onPanUpdate: tap == null ? null : (d) => tap(d.localPosition),
           child: RepaintBoundary(
             key: _key,
-            child: ValueListenableBuilder<_Adj>(
-              valueListenable: _adj,
-              builder: (context, a, _) => _composed(a, cons),
+            child: ListenableBuilder(
+              listenable: Listenable.merge([_adj, _txt, _orig]),
+              builder: (context, _) {
+                if (_orig.value) {
+                  return Image.file(File(widget.path), cacheWidth: 1600);
+                }
+                return _composed(_adj.value, cons);
+              },
             ),
           ),
         );
@@ -461,14 +817,22 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
   }
 
   void _resetAll() {
+    _checkpoint();
     setState(() {
       _adj.value = const _Adj();
       _filter = 0;
       _crop = 0;
+      _frame = 0;
       _turns = 0;
+      _fh = false;
+      _fv = false;
       _lock = null;
+      _sel = -1;
       _cropN.value = _fullRect;
+      _txt.value = const <_TextItem>[];
     });
+    _tc.clear();
+    _runProc();
   }
 
   void _snack(String text) {
@@ -477,7 +841,8 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
 
   Future<void> _save() async {
     if (_saving) return;
-    if (_key.currentContext == null) {
+    FocusManager.instance.primaryFocus?.unfocus();
+    if (_key.currentContext == null || _mode == 2) {
       setState(() => _mode = 0);
       await WidgetsBinding.instance.endOfFrame;
     }
@@ -497,28 +862,30 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
     if (mounted) setState(() => _saving = false);
   }
 
-  Widget _cropStrip() {
+  // Yatay kaydırmalı seçenek düğmeleri (kırp, çerçeve, yazı tipi...).
+  Widget _chips(List<String> names, int selected, ValueChanged<int> onTap,
+      {double height = 110}) {
     return SizedBox(
-      height: 110,
+      height: height,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 16),
-        itemCount: _crops.length,
+        itemCount: names.length,
         separatorBuilder: (_, __) => const SizedBox(width: 10),
         itemBuilder: (context, i) {
-          final selected = i == _crop;
+          final isSel = i == selected;
           return Center(
             child: GestureDetector(
-              onTap: () => _pickCrop(i),
+              onTap: () => onTap(i),
               child: Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(12),
-                  color: selected ? null : AppColors.card,
-                  gradient: selected ? appGradient : null,
+                  color: isSel ? null : AppColors.card,
+                  gradient: isSel ? appGradient : null,
                 ),
-                child: Text(_crops[i].name),
+                child: Text(names[i]),
               ),
             ),
           );
@@ -538,7 +905,11 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
         itemBuilder: (context, i) {
           final selected = i == _filter;
           return GestureDetector(
-            onTap: () => setState(() => _filter = i),
+            onTap: () {
+              if (i == _filter) return;
+              _checkpoint();
+              setState(() => _filter = i);
+            },
             child: Column(
               children: [
                 Container(
@@ -570,6 +941,34 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
     );
   }
 
+  // Filtre şeridi + filtre yoğunluğu (%0-100)
+  Widget _filterPanel() {
+    return SizedBox(
+      height: 156,
+      child: Column(
+        children: [
+          _filterStrip(),
+          if (_filter != 0)
+            ValueListenableBuilder<_Adj>(
+              valueListenable: _adj,
+              builder: (context, a, _) => _row(
+                label: 'Yoğunluk',
+                value: a.fi,
+                min: 0,
+                max: 100,
+                zero: 100,
+                centered: false,
+                onStart: _checkpoint,
+                onChanged: (v) => _adj.value = _adj.value.copyWith(fi: v),
+              ),
+            )
+          else
+            const SizedBox(height: 44),
+        ],
+      ),
+    );
+  }
+
   // Tek bir kaydırıcı satırı. Sayıya dokununca o ayar sıfırlanır.
   Widget _row({
     required String label,
@@ -579,6 +978,8 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
     required double zero,
     required bool centered,
     required ValueChanged<double> onChanged,
+    VoidCallback? onStart,
+    VoidCallback? onEnd,
   }) {
     final isZero = value.round() == zero.round();
     final sign = centered && value.round() > 0 ? '+' : '';
@@ -603,9 +1004,11 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
                     thumbColor: AppColors.blue,
                   ),
                   child: Slider(
-                    value: value,
+                    value: _cl(value, min, max),
                     min: min,
                     max: max,
+                    onChangeStart: (_) => onStart?.call(),
+                    onChangeEnd: (_) => onEnd?.call(),
                     onChanged: (v) {
                       var r = v.roundToDouble();
                       if ((r - zero).abs() < 4) r = zero;
@@ -617,7 +1020,11 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
             ),
           ),
           GestureDetector(
-            onTap: () => onChanged(zero),
+            onTap: () {
+              onStart?.call();
+              onChanged(zero);
+              onEnd?.call();
+            },
             child: SizedBox(
               width: 52,
               child: Text(
@@ -635,59 +1042,53 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
     );
   }
 
+  Widget _adjRow(
+    String label,
+    double value,
+    double min,
+    _Adj Function(_Adj a, double v) set, {
+    bool centered = true,
+    bool proc = false,
+  }) {
+    return _row(
+      label: label,
+      value: value,
+      min: min,
+      max: 100,
+      zero: 0,
+      centered: centered,
+      onStart: _checkpoint,
+      onEnd: proc ? _runProc : null,
+      onChanged: (v) => _adj.value = set(_adj.value, v),
+    );
+  }
+
   Widget _adjustPanel() {
     return SizedBox(
-      height: 176,
+      height: 188,
       child: ValueListenableBuilder<_Adj>(
         valueListenable: _adj,
         builder: (context, a, _) {
           return ListView(
             children: [
-              _row(
-                label: 'Parlaklık',
-                value: a.bright,
-                min: -100,
-                max: 100,
-                zero: 0,
-                centered: true,
-                onChanged: (v) => _adj.value = a.copyWith(bright: v),
-              ),
-              _row(
-                label: 'Kontrast',
-                value: a.contrast,
-                min: -100,
-                max: 100,
-                zero: 0,
-                centered: true,
-                onChanged: (v) => _adj.value = a.copyWith(contrast: v),
-              ),
-              _row(
-                label: 'Doygunluk',
-                value: a.sat,
-                min: -100,
-                max: 100,
-                zero: 0,
-                centered: true,
-                onChanged: (v) => _adj.value = a.copyWith(sat: v),
-              ),
-              _row(
-                label: 'Sıcaklık',
-                value: a.warm,
-                min: -100,
-                max: 100,
-                zero: 0,
-                centered: true,
-                onChanged: (v) => _adj.value = a.copyWith(warm: v),
-              ),
-              _row(
-                label: 'Vinyet',
-                value: a.vignette,
-                min: 0,
-                max: 100,
-                zero: 0,
-                centered: false,
-                onChanged: (v) => _adj.value = a.copyWith(vignette: v),
-              ),
+              _adjRow('Parlaklık', a.bright, -100,
+                  (x, v) => x.copyWith(bright: v)),
+              _adjRow('Kontrast', a.contrast, -100,
+                  (x, v) => x.copyWith(contrast: v)),
+              _adjRow('Doygunluk', a.sat, -100, (x, v) => x.copyWith(sat: v)),
+              _adjRow('Sıcaklık', a.warm, -100, (x, v) => x.copyWith(warm: v)),
+              _adjRow('Gölge', a.shadow, -100,
+                  (x, v) => x.copyWith(shadow: v),
+                  proc: true),
+              _adjRow('Parlak alan', a.highlight, -100,
+                  (x, v) => x.copyWith(highlight: v),
+                  proc: true),
+              _adjRow('Keskinlik', a.sharp, 0,
+                  (x, v) => x.copyWith(sharp: v),
+                  centered: false, proc: true),
+              _adjRow('Vinyet', a.vignette, 0,
+                  (x, v) => x.copyWith(vignette: v),
+                  centered: false),
             ],
           );
         },
@@ -717,7 +1118,8 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
                 max: 100,
                 zero: 0,
                 centered: false,
-                onChanged: (v) => _adj.value = a.copyWith(blur: v),
+                onStart: _checkpoint,
+                onChanged: (v) => _adj.value = _adj.value.copyWith(blur: v),
               ),
               _row(
                 label: 'Odak alanı',
@@ -726,7 +1128,245 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
                 max: 100,
                 zero: 50,
                 centered: false,
-                onChanged: (v) => _adj.value = a.copyWith(focus: v),
+                onStart: _checkpoint,
+                onChanged: (v) => _adj.value = _adj.value.copyWith(focus: v),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _framePanel() {
+    return _chips(
+      [for (final f in _frames) f.name],
+      _frame,
+      (i) {
+        if (i == _frame) return;
+        _checkpoint();
+        setState(() => _frame = i);
+      },
+      height: 110,
+    );
+  }
+
+  // ---- Yazı ekle ----
+  void _upd(_TextItem Function(_TextItem) f) {
+    final list = _txt.value;
+    if (_sel < 0 || _sel >= list.length) return;
+    final l = List<_TextItem>.of(list);
+    l[_sel] = f(l[_sel]);
+    _txt.value = l;
+  }
+
+  void _addText() {
+    _checkpoint();
+    final l = List<_TextItem>.of(_txt.value)..add(const _TextItem(text: 'Yazı'));
+    _txt.value = l;
+    _tc.text = 'Yazı';
+    setState(() => _sel = l.length - 1);
+  }
+
+  void _deleteText() {
+    final list = _txt.value;
+    if (_sel < 0 || _sel >= list.length) return;
+    _checkpoint();
+    final l = List<_TextItem>.of(list)..removeAt(_sel);
+    _txt.value = l;
+    _tc.clear();
+    setState(() => _sel = -1);
+  }
+
+  Widget _textPanel() {
+    return SizedBox(
+      height: 220,
+      child: ValueListenableBuilder<List<_TextItem>>(
+        valueListenable: _txt,
+        builder: (context, list, _) {
+          final has = _sel >= 0 && _sel < list.length;
+          final cur = has ? list[_sel] : null;
+          return ListView(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _tc,
+                        enabled: has,
+                        onChanged: (v) => _upd((t) => t.copyWith(text: v)),
+                        decoration: InputDecoration(
+                          hintText: has ? 'Yazını yaz' : 'Önce Ekle\'ye bas',
+                          isDense: true,
+                          filled: true,
+                          fillColor: AppColors.card,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            borderSide: BorderSide.none,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    GestureDetector(
+                      onTap: _addText,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 10),
+                        decoration: BoxDecoration(
+                          gradient: appGradient,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Text('Ekle'),
+                      ),
+                    ),
+                    if (has)
+                      GestureDetector(
+                        onTap: _deleteText,
+                        child: const Padding(
+                          padding: EdgeInsets.all(10),
+                          child: Icon(Icons.delete_outline),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              if (list.isNotEmpty)
+                _chips(
+                  [for (final t in list) t.text.isEmpty ? '(boş)' : t.text],
+                  _sel,
+                  (i) {
+                    _tc.text = list[i].text;
+                    setState(() => _sel = i);
+                  },
+                  height: 48,
+                ),
+              SizedBox(
+                height: 44,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  itemCount: _palette.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: 12),
+                  itemBuilder: (context, i) {
+                    final c = _palette[i];
+                    final isSel = cur != null && cur.color == c;
+                    return Center(
+                      child: GestureDetector(
+                        onTap: () {
+                          if (!has) return;
+                          _checkpoint();
+                          _upd((t) => t.copyWith(color: c));
+                        },
+                        child: Container(
+                          width: 30,
+                          height: 30,
+                          decoration: BoxDecoration(
+                            color: c,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: isSel ? AppColors.blue : Colors.white24,
+                              width: 2,
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              _chips(
+                _fontNames,
+                cur?.font ?? -1,
+                (i) {
+                  if (!has) return;
+                  _checkpoint();
+                  _upd((t) => t.copyWith(font: i));
+                },
+                height: 52,
+              ),
+              _row(
+                label: 'Boyut',
+                value: (cur?.size ?? 0.08) * 100,
+                min: 3,
+                max: 25,
+                zero: -1000,
+                centered: false,
+                onStart: _checkpoint,
+                onChanged: (v) => _upd((t) => t.copyWith(size: v / 100)),
+              ),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Text(
+                  'Yazının yerini değiştirmek için fotoğrafa dokun veya sürükle',
+                  style: TextStyle(fontSize: 12, color: AppColors.textDim),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _panel() {
+    switch (_mode) {
+      case 0:
+        return _filterPanel();
+      case 1:
+        return _adjustPanel();
+      case 2:
+        return _chips([for (final c in _crops) c.name], _crop, _pickCrop);
+      case 3:
+        return _portraitPanel();
+      case 4:
+        return _framePanel();
+      default:
+        return _textPanel();
+    }
+  }
+
+  Widget _hbtn(IconData icon, VoidCallback? onTap) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Icon(icon, color: onTap == null ? Colors.white24 : Colors.white),
+      ),
+    );
+  }
+
+  // Geri al, ileri al, önce/sonra (basılı tut)
+  Widget _historyBar() {
+    return SizedBox(
+      height: 44,
+      child: ValueListenableBuilder<int>(
+        valueListenable: _histV,
+        builder: (context, _, __) {
+          return Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _hbtn(Icons.undo, _undo.isNotEmpty ? _undoDo : null),
+              _hbtn(Icons.redo, _redo.isNotEmpty ? _redoDo : null),
+              const SizedBox(width: 12),
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTapDown: (_) => _orig.value = true,
+                onTapUp: (_) => _orig.value = false,
+                onTapCancel: () => _orig.value = false,
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  child: Row(
+                    children: [
+                      Icon(Icons.compare, size: 22),
+                      SizedBox(width: 6),
+                      Text('Önce/Sonra', style: TextStyle(fontSize: 13)),
+                    ],
+                  ),
+                ),
               ),
             ],
           );
@@ -736,11 +1376,13 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
   }
 
   Widget _tool(IconData icon, String label, VoidCallback onTap, bool active) {
-    return InkWell(
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+      child: SizedBox(
+        width: 72,
         child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(icon, color: active ? AppColors.blue : Colors.white),
             const SizedBox(height: 4),
@@ -754,9 +1396,52 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
     );
   }
 
+  void _setMode(int m) {
+    FocusManager.instance.primaryFocus?.unfocus();
+    setState(() => _mode = m);
+  }
+
+  Widget _toolRow() {
+    return SizedBox(
+      height: 64,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        children: [
+          _tool(Icons.crop, 'Kırp', () => _setMode(2), _mode == 2),
+          _tool(Icons.rotate_right, 'Döndür', () {
+            _checkpoint();
+            setState(() {
+              _turns = (_turns + 1) % 4;
+              _cropN.value = _fullRect;
+              _crop = 0;
+              _lock = null;
+            });
+          }, false),
+          _tool(Icons.flip, 'Ayna', () {
+            _checkpoint();
+            setState(() => _fh = !_fh);
+          }, _fh),
+          _tool(Icons.swap_vert, 'Çevir', () {
+            _checkpoint();
+            setState(() => _fv = !_fv);
+          }, _fv),
+          _tool(Icons.filter_vintage_outlined, 'Filtre', () => _setMode(0),
+              _mode == 0),
+          _tool(Icons.tune, 'Ayarlar', () => _setMode(1), _mode == 1),
+          _tool(Icons.blur_on, 'Portre', () => _setMode(3), _mode == 3),
+          _tool(Icons.text_fields, 'Yazı', () => _setMode(5), _mode == 5),
+          _tool(Icons.filter_frames_outlined, 'Çerçeve', () => _setMode(4),
+              _mode == 4),
+          _tool(Icons.restart_alt, 'Sıfırla', _resetAll, false),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     _built = true;
+    final kb = MediaQuery.of(context).viewInsets.bottom > 0;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Fotoğraf Düzenle'),
@@ -772,38 +1457,12 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
       body: SafeArea(
         child: Column(
           children: [
+            if (!kb) _historyBar(),
             Expanded(
               child: Center(child: _canvasArea()),
             ),
-            _mode == 0
-                ? _filterStrip()
-                : _mode == 1
-                    ? _adjustPanel()
-                    : _mode == 2
-                        ? _cropStrip()
-                        : _portraitPanel(),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                _tool(Icons.crop, 'Kırp',
-                    () => setState(() => _mode = 2), _mode == 2),
-                _tool(Icons.rotate_right, 'Döndür',
-                    () => setState(() {
-                          _turns = (_turns + 1) % 4;
-                          _cropN.value = _fullRect;
-                          _crop = 0;
-                          _lock = null;
-                        }),
-                    false),
-                _tool(Icons.filter_vintage_outlined, 'Filtre',
-                    () => setState(() => _mode = 0), _mode == 0),
-                _tool(Icons.tune, 'Ayarlar',
-                    () => setState(() => _mode = 1), _mode == 1),
-                _tool(Icons.blur_on, 'Portre',
-                    () => setState(() => _mode = 3), _mode == 3),
-                _tool(Icons.restart_alt, 'Sıfırla', _resetAll, false),
-              ],
-            ),
+            _panel(),
+            if (!kb) _toolRow(),
           ],
         ),
       ),
