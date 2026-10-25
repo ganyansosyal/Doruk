@@ -17,6 +17,8 @@ import '../pages/takvim_page.dart';
 import '../pages/nabiz_page.dart';
 import '../pages/login_page.dart';
 import '../services/auth_service.dart';
+import '../widgets/kredi_kapisi.dart';
+import '../widgets/kredi_rozeti.dart';
 
 /// Eski web uygulamasındaki activePage değerleri → başlık (Daha Fazla menüsü bunu listeler)
 const modules = <String, String>{
@@ -62,7 +64,12 @@ class _Shell extends StatelessWidget {
     var idx = _tabs.indexOf(location);
     if (idx < 0) idx = 3;
     return Scaffold(
-      body: SafeArea(child: child),
+      body: SafeArea(
+        child: Column(children: [
+          const KrediSeridi(),
+          Expanded(child: child),
+        ]),
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: idx,
         onDestinationSelected: (i) => context.go(_tabs[i]),
@@ -93,12 +100,15 @@ final appRouter = GoRouter(
       routes: [
         GoRoute(path: '/', builder: (c, s) => const HomePage()),
         GoRoute(path: '/market', builder: (c, s) => const MarketPage()),
-        GoRoute(path: '/doviz', builder: (c, s) => const DovizPage()),
+        GoRoute(path: '/doviz', builder: (c, s) => KrediKapisi(sayfa: 'doviz', builder: () => const DovizPage())),
         GoRoute(path: '/more', builder: (c, s) => const MorePage()),
         for (final e in modules.entries)
           GoRoute(
             path: '/${e.key}',
-            builder: (c, s) => _pages[e.key]?.call() ?? PlaceholderPage(title: e.value),
+            builder: (c, s) => KrediKapisi(
+              sayfa: e.key,
+              builder: () => _pages[e.key]?.call() ?? PlaceholderPage(title: e.value),
+            ),
           ),
       ],
     ),
