@@ -12,12 +12,14 @@ class CoinSearch extends StatefulWidget {
   final ValueChanged<String> onChanged;
   final ValueChanged<String> onSubmit;
   final double minVolume;
+  final String hint;
   const CoinSearch({
     super.key,
     this.initial = '',
     required this.onChanged,
     required this.onSubmit,
     this.minVolume = 500000,
+    this.hint = 'Coin ara (BTC, ETH...)',
   });
   @override
   State<CoinSearch> createState() => _CoinSearchState();
@@ -91,7 +93,7 @@ class _CoinSearchState extends State<CoinSearch> {
           if (v.trim().isNotEmpty) widget.onSubmit(_sym(v));
         },
         decoration: InputDecoration(
-          hintText: 'Coin ara (BTC, ETH...)',
+          hintText: widget.hint,
           prefixIcon: const Icon(Icons.search),
           filled: true,
           fillColor: kCard,
