@@ -340,7 +340,7 @@ class _CropPainter extends CustomPainter {
     }
     final dot = Paint()..color = Colors.white;
     for (final c in [rect.topLeft, rect.topRight, rect.bottomLeft, rect.bottomRight]) {
-      canvas.drawCircle(c, 9, dot);
+      canvas.drawCircle(c, 11, dot);
     }
   }
 
@@ -582,7 +582,8 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
       img = Stack(
         children: [
           ImageFiltered(
-            imageFilter: ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+            imageFilter: ui.ImageFilter.blur(
+                sigmaX: sigma, sigmaY: sigma, tileMode: TileMode.mirror),
             child: mk(600),
           ),
           ShaderMask(
@@ -649,7 +650,8 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
       content = Stack(
         children: [
           ImageFiltered(
-            imageFilter: ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+            imageFilter: ui.ImageFilter.blur(
+                sigmaX: sigma, sigmaY: sigma, tileMode: TileMode.mirror),
             child: _framed(a, 600, r, inner),
           ),
           ShaderMask(
@@ -834,7 +836,7 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
     ];
     _drag = -1;
     for (var i = 0; i < 4; i++) {
-      if ((corners[i] - p).distance < 40) {
+      if ((corners[i] - p).distance < 56) {
         _drag = i;
         _checkpoint();
         return;
@@ -1247,23 +1249,47 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
   Future<void> _segment() async {
     setState(() => _segBusy = true);
     var ok = false;
+    var stage = 'baslangic';
+    var err = 'maske bos geldi';
     try {
+      stage = 'dosya okuma';
       final bytes = await File(widget.path).readAsBytes();
+      stage = 'kucultme';
       final codec = await ui.instantiateImageCodec(bytes, targetWidth: 640);
       final fr = await codec.getNextFrame();
       final small = fr.image;
+      stage = 'png';
       final png = await small.toByteData(format: ui.ImageByteFormat.png);
       small.dispose();
       codec.dispose();
+      stage = 'gecici dosya';
       final f = File('${Directory.systemTemp.path}/seg.png');
       await f.writeAsBytes(png!.buffer.asUint8List());
-      final seg = SelfieSegmenter(
-        mode: SegmenterMode.single,
-        enableRawSizeMask: false,
-      );
-      final m = await seg.processImage(InputImage.fromFilePath(f.path));
-      await seg.close();
+      SegmentationMask? m;
+      stage = 'ML Kit';
+      // Olmazsa farklı ayarlarla tekrar dene
+      for (final cfg in const [
+        [SegmenterMode.single, false],
+        [SegmenterMode.single, true],
+        [SegmenterMode.stream, true],
+      ]) {
+        try {
+          final seg = SelfieSegmenter(
+            mode: cfg[0] as SegmenterMode,
+            enableRawSizeMask: cfg[1] as bool,
+          );
+          m = await seg.processImage(InputImage.fromFilePath(f.path));
+          await seg.close();
+          if (m != null) break;
+        } catch (e) {
+          err = 'ML Kit hatasi: $e';
+        }
+      }
+      if (m != null && m.confidences.length != m.width * m.height) {
+        err = 'maske boyutu ${m.confidences.length} / ${m.width}x${m.height}';
+      }
       if (m != null && m.confidences.length == m.width * m.height) {
+        stage = 'maske resmi';
         final px = Uint8List(m.width * m.height * 4);
         for (var i = 0; i < m.confidences.length; i++) {
           final t = ((m.confidences[i] - 0.3) / 0.4).clamp(0.0, 1.0).toDouble();
@@ -1281,11 +1307,25 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
       }
     } catch (e) {
       ok = false;
+      err = '$e';
     }
     if (!mounted) return;
     if (!ok) {
       _adj.value = _adj.value.copyWith(auto: false);
-      _snack('Kişi bulunamadı');
+      final msg = 'Aşama: $stage\n$err';
+      showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Kişi bulunamadı'),
+          content: SelectableText(msg),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Tamam'),
+            ),
+          ],
+        ),
+      );
     }
     setState(() => _segBusy = false);
   }
@@ -1399,7 +1439,7 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
 
   Widget _textPanel() {
     return SizedBox(
-      height: 220,
+      height: 236,
       child: ValueListenableBuilder<List<_TextItem>>(
         valueListenable: _txt,
         builder: (context, list, _) {
@@ -1417,7 +1457,7 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
                         enabled: has,
                         onChanged: (v) => _upd((t) => t.copyWith(text: v)),
                         decoration: InputDecoration(
-                          hintText: has ? 'Yazını yaz' : 'Önce Ekle\'ye bas',
+                          hintText: has ? 'Yazını yaz (yeri: fotoğrafa dokun)' : 'Önce Ekle\'ye bas',
                           isDense: true,
                           filled: true,
                           fillColor: AppColors.card,
@@ -1460,7 +1500,7 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
                     _tc.text = list[i].text;
                     setState(() => _sel = i);
                   },
-                  height: 48,
+                  height: 44,
                 ),
               SizedBox(
                 height: 44,
@@ -1504,7 +1544,7 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
                   _checkpoint();
                   _upd((t) => t.copyWith(font: i));
                 },
-                height: 52,
+                height: 48,
               ),
               _row(
                 label: 'Boyut',
@@ -1515,13 +1555,6 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
                 centered: false,
                 onStart: _checkpoint,
                 onChanged: (v) => _upd((t) => t.copyWith(size: v / 100)),
-              ),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
-                child: Text(
-                  'Yazının yerini değiştirmek için fotoğrafa dokun veya sürükle',
-                  style: TextStyle(fontSize: 12, color: AppColors.textDim),
-                ),
               ),
             ],
           );
@@ -1541,7 +1574,7 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
 
   Widget _stickerPanel() {
     return SizedBox(
-      height: 200,
+      height: 232,
       child: ValueListenableBuilder<List<_TextItem>>(
         valueListenable: _txt,
         builder: (context, list, _) {
@@ -1876,7 +1909,12 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
           children: [
             if (!kb) _historyBar(),
             Expanded(
-              child: Center(child: _canvasArea()),
+              child: Center(
+                child: Padding(
+                  padding: EdgeInsets.all(_mode == 2 ? 20 : 0),
+                  child: _canvasArea(),
+                ),
+              ),
             ),
             _panel(),
             if (!kb) _toolRow(),
