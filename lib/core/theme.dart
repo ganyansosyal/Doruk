@@ -18,7 +18,7 @@ final ThemeData dorukTheme = ThemeData(
     backgroundColor: const Color(0xFF060A16),
     indicatorColor: kAccent.withOpacity(0.18),
   ),
-  cardTheme: CardTheme(
+  cardTheme: CardThemeData(
     color: kCard,
     elevation: 0,
     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
