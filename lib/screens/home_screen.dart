@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../theme.dart';
+import 'gallery_screen.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -12,13 +13,20 @@ class HomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    void openGallery() {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const GalleryScreen()),
+      );
+    }
+
     final tiles = <_Tile>[
-      _Tile(Icons.image_outlined, 'Fotoğraf\nDüzenle'),
-      _Tile(Icons.videocam_outlined, 'Video\nDüzenle'),
-      _Tile(Icons.text_fields, 'Metin\nEkle'),
-      _Tile(Icons.dashboard_customize_outlined, 'Şablonlar'),
-      _Tile(Icons.photo_camera_outlined, 'Kamera'),
-      _Tile(Icons.photo_library_outlined, 'Galeri'),
+      _Tile(Icons.image_outlined, 'Fotoğraf\nDüzenle', openGallery),
+      _Tile(Icons.videocam_outlined, 'Video\nDüzenle', openGallery),
+      _Tile(Icons.text_fields, 'Metin\nEkle', null),
+      _Tile(Icons.dashboard_customize_outlined, 'Şablonlar', null),
+      _Tile(Icons.photo_camera_outlined, 'Kamera', null),
+      _Tile(Icons.photo_library_outlined, 'Galeri', openGallery),
     ];
 
     return SafeArea(
@@ -46,7 +54,7 @@ class HomeScreen extends StatelessWidget {
               for (final t in tiles)
                 InkWell(
                   borderRadius: BorderRadius.circular(16),
-                  onTap: () => _soon(context, t.label.replaceAll('\n', ' ')),
+                  onTap: t.onTap ?? () => _soon(context, t.label.replaceAll('\n', ' ')),
                   child: Container(
                     decoration: BoxDecoration(
                       color: AppColors.card,
@@ -129,7 +137,8 @@ class HomeScreen extends StatelessWidget {
 class _Tile {
   final IconData icon;
   final String label;
-  _Tile(this.icon, this.label);
+  final VoidCallback? onTap;
+  _Tile(this.icon, this.label, this.onTap);
 }
 
 class _Thumb extends StatelessWidget {
