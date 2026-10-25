@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../theme.dart';
 import 'edit_photo_screen.dart';
+import 'edit_video_screen.dart';
 
 class GalleryScreen extends StatefulWidget {
   const GalleryScreen({super.key});
@@ -35,8 +36,10 @@ class _GalleryScreenState extends State<GalleryScreen> {
             builder: (_) => EditPhotoScreen(path: file.path)),
       );
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Video düzenleme yakında')),
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+            builder: (_) => EditVideoScreen(path: file.path)),
       );
     }
   }
