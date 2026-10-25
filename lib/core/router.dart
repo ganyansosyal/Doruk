@@ -8,6 +8,12 @@ import '../pages/placeholder_page.dart';
 import '../pages/analiz_page.dart';
 import '../pages/rsi_page.dart';
 import '../pages/hacim_page.dart';
+import '../pages/fibo_page.dart';
+import '../pages/sinyal_page.dart';
+import '../pages/whale_page.dart';
+import '../pages/ceviri_page.dart';
+import '../pages/deprem_page.dart';
+import '../pages/takvim_page.dart';
 
 /// Eski web uygulamasındaki activePage değerleri → başlık (Daha Fazla menüsü bunu listeler)
 const modules = <String, String>{
@@ -32,6 +38,12 @@ final Map<String, Widget Function()> _pages = {
   'analiz': () => const AnalizPage(),
   'rsi': () => const RsiPage(),
   'hacim': () => const HacimPage(),
+  'fibo': () => const FiboPage(),
+  'sinyal': () => const SinyalPage(),
+  'whale': () => const WhalePage(),
+  'ceviri': () => const CeviriPage(),
+  'deprem': () => const DepremPage(),
+  'takvim': () => const TakvimPage(),
 };
 
 class _Shell extends StatelessWidget {
