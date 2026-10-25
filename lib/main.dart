@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'core/firebase_init.dart';
 import 'core/router.dart';
 import 'core/theme.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await initFirebase();
   runApp(const DorukApp());
 }
 
