@@ -22,18 +22,8 @@ class SplashScreen extends StatelessWidget {
             child: Column(
               children: [
                 const Spacer(flex: 3),
-                Container(
-                  width: 96,
-                  height: 96,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(24),
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF3B82F6), Color(0xFF8B5CF6)],
-                    ),
-                  ),
-                  child: const Icon(Icons.play_arrow_rounded,
-                      size: 64, color: Colors.white),
-                ),
+                Image.asset('assets/logo.png',
+                    width: 110, height: 110, cacheWidth: 330),
                 const SizedBox(height: 24),
                 const Text(
                   'EditPro',

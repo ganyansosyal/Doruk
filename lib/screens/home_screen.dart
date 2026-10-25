@@ -21,12 +21,18 @@ class HomeScreen extends StatelessWidget {
     }
 
     final tiles = <_Tile>[
-      _Tile(Icons.image_outlined, 'Fotoğraf\nDüzenle', openGallery),
-      _Tile(Icons.videocam_outlined, 'Video\nDüzenle', openGallery),
-      _Tile(Icons.text_fields, 'Metin\nEkle', null),
-      _Tile(Icons.dashboard_customize_outlined, 'Şablonlar', null),
-      _Tile(Icons.photo_camera_outlined, 'Kamera', null),
-      _Tile(Icons.photo_library_outlined, 'Galeri', openGallery),
+      _Tile(Icons.image, 'Fotoğraf\nDüzenle', openGallery,
+          const Color(0xFFEC4899), const Color(0xFF8B5CF6)),
+      _Tile(Icons.videocam, 'Video\nDüzenle', openGallery,
+          const Color(0xFFF43F5E), const Color(0xFFD946EF)),
+      _Tile(Icons.text_fields, 'Metin\nEkle', null,
+          const Color(0xFF14B8A6), const Color(0xFF64748B)),
+      _Tile(Icons.dashboard_customize, 'Şablonlar', null,
+          const Color(0xFFEC4899), const Color(0xFF6366F1)),
+      _Tile(Icons.photo_camera, 'Kamera', null,
+          const Color(0xFF94A3B8), const Color(0xFF64748B)),
+      _Tile(Icons.photo_library, 'Galeri', openGallery,
+          const Color(0xFF10B981), const Color(0xFF14B8A6)),
     ];
 
     return SafeArea(
@@ -54,7 +60,8 @@ class HomeScreen extends StatelessWidget {
               for (final t in tiles)
                 InkWell(
                   borderRadius: BorderRadius.circular(16),
-                  onTap: t.onTap ?? () => _soon(context, t.label.replaceAll('\n', ' ')),
+                  onTap: t.onTap ??
+                      () => _soon(context, t.label.replaceAll('\n', ' ')),
                   child: Container(
                     decoration: BoxDecoration(
                       color: AppColors.card,
@@ -63,7 +70,19 @@ class HomeScreen extends StatelessWidget {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(t.icon, size: 28, color: AppColors.purple),
+                        Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(12),
+                            gradient: LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [t.c1, t.c2],
+                            ),
+                          ),
+                          child: Icon(t.icon, size: 26, color: Colors.white),
+                        ),
                         const SizedBox(height: 8),
                         Text(t.label,
                             textAlign: TextAlign.center,
@@ -87,11 +106,11 @@ class HomeScreen extends StatelessWidget {
           const SizedBox(height: 12),
           Row(
             children: const [
-              Expanded(child: _Thumb('00:32', Color(0xFFFF7A59))),
+              Expanded(child: _Thumb('00:32', 'assets/proje1.jpg')),
               SizedBox(width: 12),
-              Expanded(child: _Thumb('00:18', Color(0xFF8B5CF6))),
+              Expanded(child: _Thumb('00:18', 'assets/proje2.jpg')),
               SizedBox(width: 12),
-              Expanded(child: _Thumb('00:45', Color(0xFF14B8A6))),
+              Expanded(child: _Thumb('00:45', 'assets/proje3.jpg')),
             ],
           ),
         ],
@@ -100,33 +119,57 @@ class HomeScreen extends StatelessWidget {
   }
 
   Widget _banner(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        gradient: const LinearGradient(
-          begin: Alignment.centerLeft,
-          end: Alignment.centerRight,
-          colors: [Color(0xFF6D4AFF), Color(0xFFFF7A59)],
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(20),
+      child: Stack(
         children: [
-          const Text(
-            'Fotoğraf ve Videolarını\nDüzenle, Hikayeni Anlat',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 14),
-          ElevatedButton(
-            onPressed: () => _soon(context, 'Yeni proje'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.white,
-              foregroundColor: const Color(0xFF3B3BD8),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20)),
+          Positioned.fill(
+            child: Image.asset(
+              'assets/banner.jpg',
+              fit: BoxFit.cover,
+              alignment: Alignment.centerRight,
+              cacheWidth: 800,
             ),
-            child: const Text('Yeni Proje Oluştur'),
+          ),
+          const Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                  colors: [
+                    Color(0xFF6D4AFF),
+                    Color(0xCC6D4AFF),
+                    Color(0x006D4AFF),
+                  ],
+                  stops: [0.0, 0.45, 1.0],
+                ),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(18),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Fotoğraf ve Videolarını\nDüzenle, Hikayeni Anlat',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 14),
+                ElevatedButton(
+                  onPressed: () => _soon(context, 'Yeni proje'),
+                  style: ElevatedButton.styleFrom(
+                    elevation: 0,
+                    backgroundColor: Colors.white,
+                    foregroundColor: const Color(0xFF3B3BD8),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20)),
+                  ),
+                  child: const Text('Yeni Proje Oluştur'),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -138,30 +181,43 @@ class _Tile {
   final IconData icon;
   final String label;
   final VoidCallback? onTap;
-  _Tile(this.icon, this.label, this.onTap);
+  final Color c1;
+  final Color c2;
+  _Tile(this.icon, this.label, this.onTap, this.c1, this.c2);
 }
 
 class _Thumb extends StatelessWidget {
   final String time;
-  final Color color;
-  const _Thumb(this.time, this.color);
+  final String asset;
+  const _Thumb(this.time, this.asset);
 
   @override
   Widget build(BuildContext context) {
     return AspectRatio(
       aspectRatio: 0.8,
-      child: Container(
-        padding: const EdgeInsets.all(8),
-        alignment: Alignment.bottomLeft,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [color, AppColors.card],
-          ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Image.asset(asset, fit: BoxFit.cover, cacheWidth: 300),
+            const DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Color(0x00000000), Color(0xAA000000)],
+                  stops: [0.6, 1.0],
+                ),
+              ),
+            ),
+            Positioned(
+              left: 8,
+              bottom: 8,
+              child: Text(time, style: const TextStyle(fontSize: 11)),
+            ),
+          ],
         ),
-        child: Text(time, style: const TextStyle(fontSize: 11)),
       ),
     );
   }
