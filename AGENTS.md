@@ -28,49 +28,62 @@ Uygulamayı kullanacak kişi telefondan çalışıyor (bilgisayar yok), kodlar G
   - **Sonuç:** Kotlin köprüsü, manifest izinleri vb. native değişiklikler için workflow'a "repodaki hazır dosyaları `android/` içine kopyala" adımı eklenmeli (örneğin `android_overrides/` klasörü). Bu henüz yapılmadı.
 - APK build **sadece elle** çalışır (`workflow_dispatch`), her push'ta otomatik build **istenmiyor**. Dosya: `.github/workflows/build.yml`. Çıktı: artifact `EditPro-APK` (zip içinde `app-release.apk`).
 - Paketler (`pubspec.yaml`): `image_picker` (telefonun kendi seçicisi, izin gerekmez), `gal` (galeriye kaydetme).
+- **Güncelleme (ikon):** `build.yml` içine "Uygulama ikonunu yap" adımı eklendi. `flutter create`'ten sonra `assets/logo.png` dosyasını ImageMagick `convert` ile 48/72/96/144/192 px'e küçültüp `android/app/src/main/res/mipmap-*/ic_launcher.png` olarak yazıyor. Yani telefon ikonu otomatik logo oluyor. (`android_overrides/` yöntemi hâlâ yapılmadı, Kotlin köprüsü için gerekecek.)
+- **Görseller (`assets/`):** `pubspec.yaml` içinde `flutter: assets: - assets/` tanımlı. Klasörde 11 dosya olmalı: `logo.png`, `banner.jpg`, `proje1.jpg`, `proje2.jpg`, `proje3.jpg`, `ikon_foto.png`, `ikon_video.png`, `ikon_metin.png`, `ikon_sablon.png`, `ikon_kamera.png`, `ikon_galeri.png`. Hepsi Gemini ile üretildi, sonra Python ile küçültüldü (logo 512px, ikonlar 160px, banner 1000px, proje resimleri 480x596). **Bu dosyalar yüklenmeden build alınırsa hata verir** (asset bulunamadı).
+- **GitHub bilgisi:** kullanıcı adı `ganyansosyal`, repo `fotoproje`. Klasör oluşturma: `https://github.com/ganyansosyal/fotoproje/new/main/assets` (dosya adı `yer.txt`). Görsel yükleme: `https://github.com/ganyansosyal/fotoproje/upload/main/assets`.
 
 ## 5. Dosya yapısı
 ```
-pubspec.yaml
-.github/workflows/build.yml
+pubspec.yaml                     assets/ tanımlı
+.github/workflows/build.yml      APK build + ikon adımı
+assets/                          logo, banner, proje1-3, ikon_* (bkz. bölüm 4)
 lib/
   main.dart                      MaterialApp, koyu tema, SplashScreen ile başlar
   theme.dart                     AppColors + appGradient (mavi #3B82F6 -> mor #8B5CF6, arka plan #0B1226, kart #16204A)
-  filters.dart                   FilterItem + photoFilters (renk matrisi, ~48 filtre, yardımcılarla zincirleniyor)
+  filters.dart                   FilterItem + photoFilters (renk matrisi, ~48 filtre)
   screens/
-    splash_screen.dart           Açılış, "Başla" -> MainShell
+    splash_screen.dart           Açılış, assets/logo.png, "Başla" -> MainShell
     main_shell.dart              Alt menü: Ana Sayfa / Projeler / Profil (Projeler ve Profil boş yer tutucu)
-    home_screen.dart             Banner, 6 kutu, Son Projeler (renkli yer tutucu)
-    gallery_screen.dart          Fotoğraflar/Videolar sekmesi, seçici ile seçilenleri ızgarada gösterir
-    edit_photo_screen.dart       Fotoğraf düzenleme (aşağıya bak)
+    home_screen.dart             Fotoğraflı banner, 6 kutu (ikon_*.png), Son Projeler (proje1-3.jpg)
+    gallery_screen.dart          Tasarıma uygun Galeri (bkz. bölüm 6)
+    edit_photo_screen.dart       Fotoğraf düzenleme (bkz. bölüm 6)
 AGENTS.md
 ```
+**Not:** `lib/screens/theme.dart` ile `lib/theme.dart` aynı boyutta, büyük ihtimalle kopya. `lib/screens/theme.dart` kullanılmıyorsa silinebilir (önce import'lara bak).
 
 ## 6. Neler yapıldı
-- Açılış ekranı, Ana Sayfa (banner, 6 kutu, son projeler yer tutucusu), alt menü.
-- Galeri: fotoğraf (çoklu) ve video seçme, ızgarada gösterme. Fotoğrafa dokununca düzenleme açılır. Videoya dokununca "Video düzenleme yakında" der.
-- Fotoğraf düzenleme: ~48 filtre (Instagram tarzı Clarendon, Gingham, Moon, Lark, Juno, X-Pro II vb. + eski basit olanlar), parlaklık, kontrast, 90° döndürme, kırpma oranları (Orijinal, 1:1, 4:3, 3:4, 16:9, 9:16), **✓ ile telefon galerisine "EditPro" albümüne PNG kaydetme**.
+- Açılış ekranı (yeni logo ile), Ana Sayfa, alt menü.
+- **Ana Sayfa:** banner artık fotoğraflı (sağda foto, solda mor gradient, resim üstüne yarı saydam gradient katmanı, `ShaderMask` yok). 6 kutunun ikonları Gemini ile yapılmış renkli gradient PNG'ler (`ikon_*.png`, 48px gösterilir). Son Projeler küçük resimleri `proje1-3.jpg` + alt karartma gradient + süre yazısı. Banner butonu `elevation: 0`.
+- **Galeri (tasarımdaki 9. ekrana benzetildi):** sola yaslı kalın "Galeri" başlığı, seçili sekme mavi-mor gradient, seçilmeyen koyu kart, 3 sütun fotoğraf ızgarası (`cacheWidth: 300`), boş durumda ikonlu yazı, video kutusunda oynat ikonu + dosya adı, alttaki seç butonu gradient (`GestureDetector`, gölge ve dalga yok). Fotoğrafa dokununca düzenleme açılır, videoya dokununca "Video düzenleme yakında".
+- **Fotoğraf düzenleme (`edit_photo_screen.dart`, yeni sürüm):**
+  - Filtre şeridi (eski ~48 renk matrisi filtresi, hâlâ geçerli).
+  - **Ayarlar:** Parlaklık, Kontrast, Doygunluk, Sıcaklık, Vinyet. Hepsi -100..+100 (Vinyet 0..100). Sağda sayı görünür, ortada beyaz çizgi 0 noktasını gösterir, 0'a yaklaşınca yapışır, sayıya dokununca o ayar sıfırlanır. Tüm ayarlar `_Adj` sınıfında, `ValueNotifier<_Adj>` ile sadece canvas yenilenir. Filtre + ayarlar **tek renk matrisinde** birleşir (`_matrix`).
+  - **Portre (arka plan bulanıklığı):** fotoğrafa dokun/sürükle ile odak noktası, "Bulanıklık" ve "Odak alanı" kaydırıcıları. Altta bulanık kopya (`ImageFiltered`, `cacheWidth: 600`), üstte keskin kopya (`ShaderMask` + `RadialGradient`, dstIn). **Kişiyi otomatik tanımıyor**, odak elle seçiliyor. Bu, bölüm 10'daki "blur yok" kuralının kullanıcı isteğiyle tek istisnası.
+  - **Kırpma:** Orijinal, **Serbest**, 1:1, 4:3, 3:4, 16:9, 9:16. Kırp sekmesinde fotoğraf üstünde çerçeve çıkar: köşe noktalarından boyutlandırma, içinden sürükleyerek taşıma. Oranlı seçeneklerde çerçeve oranı korur. Kırpma normalize `Rect` (`_cropN`) olarak tutulur, kırp sekmesinden çıkınca fotoğraf kırpılmış hâliyle büyük gösterilir. Döndürünce kırpma sıfırlanır. Fotoğrafın en/boy oranı `initState`'te `ResizeImage` ile okunur.
+  - Döndür (90°), **Sıfırla** butonu (ayarlar + filtre + kırpma + döndürme hepsini sıfırlar), ✓ ile "EditPro" albümüne PNG kaydetme (`image.dispose()` çağrılır, kırp sekmesindeyken kaydedilirse önce normal görünüme geçer).
 - Build hattı: GitHub Actions ile APK üretimi çalıştı (açılış ve Ana Sayfa ekranı telefonda görüldü).
 
 ## 7. Bilinen durum ve eksikler
-- **Son sürüm (filtreler, kırp, kaydet, galeri) henüz APK olarak test edilmedi.** Sıradaki ilk iş: build al, hata varsa düzelt.
-- Kırpma sadece ortadan, oran seçmeli. Sürükleyerek serbest kırpma yok.
-- Kayıt çözünürlüğü ekran boyutuna bağlı (RepaintBoundary, pixelRatio 3), orijinal çözünürlük korunmuyor.
-- Filtreler Instagram'ın gizli formüllerinin birebir kopyası değil, renk matrisi ile yapılmış benzerleri.
-- Görsel zenginlik düşük: banner'da fotoğraf yok, ikonlar tek renk, proje küçük resimleri düz gradient. Kullanıcı bunu "sonra yaparız" dedi.
-- Yapılmayanlar: Video Düzenleme, Yazı Ekle, Dışa Aktar (720p MP4), Projeler, Şablonlar, Profil, Kamera, Metin Ekle (ana sayfa kutusu), proje kaydetme.
+- **Test edilmedi:** yeni `edit_photo_screen.dart` (kaydırıcılar, Portre, Serbest kırpma, Sıfırla), yeni `gallery_screen.dart`, `home_screen.dart`, `splash_screen.dart`, `build.yml` ikon adımı. Bu ortamda Flutter/Dart yok, kodlar derlenerek denenemedi. Kullanıcıdan son görülen ekran görüntüleri hâlâ eski sürümdü (kırp şeridinde 4 buton). Sıradaki ilk iş: `assets/` dosyalarını yüklet, hepsini commit ettir, APK build al, hata varsa metni iste ve düzelt.
+- Portre bulanıklığı elle odaklı. Gerçek portre modu için Google ML Kit selfie segmentation paketi (`google_mlkit_selfie_segmentation`) gerekir, istenirse sonra eklenir (yeni paket, native bağımlılık).
+- Kayıt çözünürlüğü ekran boyutuna bağlı (RepaintBoundary, pixelRatio 3), kırpılmış fotoğrafta keskin katman `cacheWidth` en fazla 3000. Orijinal çözünürlük tam korunmuyor.
+- Filtreler Instagram'ın gizli formüllerinin kopyası değil, renk matrisi ile yapılmış benzerleri.
+- **İptal edilen iş:** "kaliteli/Instagram gibi" LUT filtre işi. Python ile 24 filtre (Clarendon, Gingham, Moon, Lark, Reyes, Juno, Slumber, Crema, Aden, Perpetua, Amaro, Mayfair, Rise, Hudson, Valencia, X-Pro II, Sierra, Willow, Lo-Fi, Earlybird, Inkwell, Nashville, 1977) önizlemesi hazırlandı ama kullanıcı "iptal" dedi, koda **hiçbiri bağlanmadı**. Eski filtreler duruyor. Tekrar istenirse yol: eğri tabanlı LUT PNG üretip Flutter fragment shader ile uygulamak (`flutter: shaders:`), kenar karartma ayrı katman.
+- Yapılmayanlar: Video Düzenleme, Yazı Ekle, Dışa Aktar (720p MP4), Projeler, Şablonlar, Profil, Kamera, Metin Ekle (ana sayfa kutusu), "Yeni Proje Oluştur" butonu, Son Projeler gerçek veri (şu an sabit resim), proje kaydetme, Galeri ekranında alt menü.
 
 ## 8. Sıradaki işler (önerilen)
-1. Mevcut halde APK build al, fotoğraf akışını telefonda test et, hataları düzelt.
+1. `assets/` (11 dosya) + güncel kod dosyalarını yükle, APK build al, fotoğraf akışını (filtre, ayarlar, Portre, Serbest kırpma, kaydet) telefonda test et, hataları düzelt.
 2. Video ekranı: video oynatma (`video_player`), zaman çizelgesi, yazı satırları listesi (metin, başlangıç, bitiş), satıra dokununca videoyu o saniyeye atlatma.
-3. Workflow'a native dosya kopyalama adımı ekle, sonra Kotlin + Media3 Transformer köprüsüyle yazıları videoya işle, 720p MP4 dışa aktar.
+3. Workflow'a native dosya kopyalama adımı (`android_overrides/`) ekle, sonra Kotlin + Media3 Transformer köprüsüyle yazıları videoya işle, 720p MP4 dışa aktar.
 4. Yazı görünümü kararı ve stil seçenekleri (font, renk, konum).
-5. Projeler listesi, Şablonlar, Profil, görsel cilalama.
+5. Projeler listesi, Şablonlar, Profil, diğer ekranları tasarıma benzetme (Efektler ve Filtreler, Fotoğraf Düzenleme görünümü vb.), görsel cilalama.
+6. İsteğe bağlı: gerçek portre (ML Kit), kaliteli LUT filtreler.
 
 ## 9. Kullanıcıyla çalışma kuralları (önemli)
 - Kullanıcı **Türkçe** yazıyor, cevaplar **Türkçe**, **kısa, basit, anlaşılır** olmalı. Uzun yazı sevmiyor.
 - Kurulum ve yükleme işleri **tane tane, sıra sıra adım adım** anlatılmalı.
-- Telefondan çalışıyor: kodu **indirilebilir dosya olarak** ver. **GitHub linki verme**, sadece dosyanın hangi klasöre (örn. `lib/screens/`) konacağını ve "kalem ile hepsini sil, yapıştır" gibi adımı yaz.
+- Telefondan çalışıyor: kodu **indirilebilir dosya olarak** ver ve dosyanın hangi klasöre (örn. `lib/screens/`) konacağını, "kalem ile hepsini sil, yapıştır, Commit changes" adımını yaz. Kullanıcı istediği için artık **doğrudan GitHub linki de verilebilir** (kullanıcı adı `ganyansosyal`, repo `fotoproje`, bkz. bölüm 4). Cevaplar çok kısa olsun, gerekirse kopyalanabilir kod bloğu kullan.
+- Görsel gerekirse kullanıcı **Gemini** ile üretiyor: sen kısa İngilizce istem (prompt) yaz ("no text, no shadow" ekle), gelen görselleri sen Python ile küçültüp `assets/` için hazırla. Görsel dosyalar GitHub'a **Add file > Upload files** ile yüklenir (Create new file ile olmaz).
 - Yeni dosya için GitHub'da **Add file > Create new file**; isim kutusuna `/` yazınca klasör oluşur. Var olan dosyayı değiştirmek için dosyayı aç, kalem ikonu, hepsini sil, yapıştır, **Commit changes**.
 - Performans (donma/kasma yok), animasyon yok, gölge yok kuralı için 10. bölüme bak.
 - Büyük kararlarda önce kısaca konuşmak, sonra yapmak istiyor. Kod parçalarının ayrı dosyalarda olmasını (bir ekran bir dosya) tercih ediyor.
@@ -98,10 +111,10 @@ Hedef: telefonda **donma, kasma, takılma (jank) olmasın**. Her yeni kod bu kur
 - İçerik koda gömülü sabit değil, listeden üretilsin (filtre, oran, yazı satırı, proje listesi gibi).
 
 **Mevcut kodda bu kurallara aykırı olan yerler (düzeltilecek)**
-- `ElevatedButton` varsayılan gölge/animasyon: Ana Sayfa banner butonu ve Galeri alt butonu.
-- Varsayılan sayfa geçiş animasyonu ve dokunma dalgası (`main.dart` temasında kapatılmalı).
-- `edit_photo_screen.dart`: parlaklık/kontrast kaydırıcısı her harekette tüm ekranı yeniden çiziyor, büyük fotoğrafa renk filtresi uygulanıyor. Önizleme küçük çözünürlükte yapılmalı, kaydırıcı için `ValueNotifier` kullanılmalı. Filtre şeridinde 48 küçük resim var, `cacheWidth` küçük tutulmalı.
+- Varsayılan sayfa geçiş animasyonu ve dokunma dalgası (`main.dart` temasında hâlâ kapatılmadı: `pageTransitionsTheme` ve `splashFactory: NoSplash.splashFactory`). Ana Sayfa kutularındaki `InkWell` dalga veriyor.
 - `SnackBar` kısa animasyonlu. Gerekirse sabit bir uyarı yazısı ile değiştirilebilir.
+- Düzeltilenler: Ana Sayfa ve Galeri butonları (gölgesiz), `edit_photo_screen.dart` kaydırıcıları artık `ValueNotifier` ile sadece canvas'ı yeniliyor, filtre + ayar tek matris, filtre şeridi `cacheWidth: 150`.
+- Bilinçli istisna: Portre bulanıklığı (`ImageFiltered` + `ShaderMask`), kullanıcı istedi. Takılma olursa bulanık katman `cacheWidth` değerini düşür ya da sigma üst sınırını azalt.
 
 ## 11. Performansı etkileyen her şey (ayrıntılı liste)
 Amaç: sayfa kendi kendine sürekli yenilenmesin, hiçbir ekranda boşuna iş yapılmasın.
