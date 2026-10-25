@@ -34,6 +34,12 @@ class AuthService {
   /// Giriş ekranında gösterilecek mesaj (ban, hesap silindi vb.)
   static final ValueNotifier<String> notice = ValueNotifier<String>('');
 
+  /// Misafir oturumu mu? (kredi kaynağı ve günlük hediye buna bağlı)
+  static final ValueNotifier<bool> misafir = ValueNotifier<bool>(false);
+
+  /// Misafir "Kayıt ol" deyince giriş ekranı kayıt sekmesinde açılsın
+  static bool kayitModuIstek = false;
+
   static SharedPreferences? _prefs;
   static String _deviceId = '';
   static String? _ip;
@@ -50,6 +56,7 @@ class AuthService {
     }
     final saved = _prefs!.getString('doruk_login_user');
     if (saved != null && saved.isNotEmpty) {
+      misafir.value = _prefs!.getBool('doruk_misafir') ?? false;
       user.value = saved;
       _banDinle(saved);
       // Açılışta ban/force-logout kontrolü (arka planda)
@@ -127,12 +134,84 @@ class AuthService {
     if (banErr != null) return banErr;
 
     await _prefs!.setString('doruk_login_user', kullanici);
+    await _prefs!.setBool('doruk_misafir', false);
     _kayitCihazVeIp(kullanici);
     _logKaydet(kullanici, 'giris');
     notice.value = '';
+    misafir.value = false;
     user.value = kullanici;
     _banDinle(kullanici);
     return null;
+  }
+
+  // ───────────────────────── MİSAFİR ─────────────────────────
+
+  static String _misafirAdUret() => 'user${100 + Random().nextInt(900)}';
+
+  /// Misafir olarak gir. Hata varsa metin, başarılıysa null.
+  /// Aynı cihaz (kaldırılıp kurulmadıkça) aynı misafir adını ve kredisini kullanır.
+  static Future<String?> misafirGiris() async {
+    if (!firebaseReady) return 'Veritabanına bağlanılamadı. İnternet bağlantını kontrol et.';
+    try {
+      var nick = _prefs!.getString('doruk_misafir_nick');
+
+      // Hesap silinmişse eski nick'i bırak
+      if (nick != null) {
+        final del = await db().ref('deleted_accounts/${fbKey(nick)}').get();
+        if (del.exists) {
+          await _prefs!.remove('doruk_misafir_nick');
+          nick = null;
+        }
+      }
+
+      if (nick != null) {
+        // kullanicilar kaydı silinmiş olabilir → yeniden yaz
+        final k = fbKey(nick);
+        final snap = await db().ref('kullanicilar/$k').get();
+        if (!snap.exists) {
+          await db().ref('kullanicilar/$k').set({
+            'kullanici': nick, 'email': '— (misafir)', 'kayit': DateTime.now().millisecondsSinceEpoch,
+            'misafir': true, 'cihazId': _deviceId,
+          });
+        }
+      } else {
+        // Boş bir user### adı bul (en fazla 3 deneme, web ile aynı)
+        var ad = _misafirAdUret();
+        for (var i = 0; i < 3; i++) {
+          if (!(await db().ref('kullanicilar/${fbKey(ad)}').get()).exists) break;
+          ad = _misafirAdUret();
+        }
+        nick = ad;
+        final k = fbKey(nick);
+        await db().ref('kullanicilar/$k').set({
+          'kullanici': nick, 'email': '— (misafir)', 'kayit': DateTime.now().millisecondsSinceEpoch,
+          'misafir': true, 'cihazId': _deviceId,
+        });
+        db().ref('misafir_cihaz_nick/${fbKey(_deviceId)}').set(nick).catchError((_) {});
+        await _prefs!.setString('doruk_misafir_nick', nick);
+      }
+
+      final banErr = await _banKontrol(nick);
+      if (banErr != null) return banErr;
+
+      await _prefs!.setString('doruk_login_user', nick);
+      await _prefs!.setBool('doruk_misafir', true);
+      _kayitCihazVeIp(nick);
+      notice.value = '';
+      misafir.value = true; // user'dan ÖNCE: kredi servisi doğru koleksiyonu açsın
+      user.value = nick;
+      _banDinle(nick);
+      return null;
+    } catch (e) {
+      return 'Bağlantı hatası: $e';
+    }
+  }
+
+  /// Misafir "Kayıt ol" deyince: oturumu kapat, giriş ekranını kayıt sekmesinde aç.
+  /// (doruk_misafir_nick silinmez — web'deki gibi)
+  static Future<void> misafirdenKayda() async {
+    kayitModuIstek = true;
+    await cikis();
   }
 
   // ───────────────────────── KAYIT ─────────────────────────
@@ -222,17 +301,19 @@ class AuthService {
 
   static Future<void> cikis({String mesaj = ''}) async {
     final k = user.value;
-    if (k != null) _logKaydet(k, 'cikis');
+    if (k != null && !misafir.value) _logKaydet(k, 'cikis');
     for (final s in _subs) {
       s.cancel();
     }
     _subs.clear();
     await _prefs?.remove('doruk_login_user');
+    await _prefs?.remove('doruk_misafir');
     await _prefs?.remove('doruk_sohbet_nick');
     try {
       await FirebaseAuth.instance.signOut();
     } catch (_) {}
     notice.value = mesaj;
+    misafir.value = false;
     user.value = null;
   }
 
