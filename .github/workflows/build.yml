@@ -24,6 +24,9 @@ jobs:
       - name: Uygulama adını EditPro yap
         run: sed -i 's/android:label="[^"]*"/android:label="EditPro"/' android/app/src/main/AndroidManifest.xml
 
+      - name: ImageMagick kur
+        run: sudo apt-get update && sudo apt-get install -y imagemagick
+
       - name: Uygulama ikonunu yap
         run: |
           for d in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
