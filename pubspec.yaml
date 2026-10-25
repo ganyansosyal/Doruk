@@ -14,10 +14,8 @@ dependencies:
   shared_preferences: ^2.3.2
   fl_chart: ^0.69.0
   intl: ^0.19.0
-  # Faz 2 (Auth/Sohbet/Cüzdan) için:
-  # firebase_core: ^3.6.0
-  # firebase_auth: ^5.3.1
-  # firebase_database: ^11.1.4
+  firebase_core: ^3.6.0
+  firebase_database: ^11.1.4
 
 dev_dependencies:
   flutter_test:
