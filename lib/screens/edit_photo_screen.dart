@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
@@ -108,6 +109,7 @@ class _Adj {
   final double focus; // 0..100 (odak alanı büyüklüğü)
   final double fx; // -1..1 odak noktası
   final double fy; // -1..1
+  final double angle; // -15..15 derece (açı düzeltme)
   const _Adj({
     this.bright = 0,
     this.contrast = 0,
@@ -122,6 +124,7 @@ class _Adj {
     this.focus = 50,
     this.fx = 0,
     this.fy = 0,
+    this.angle = 0,
   });
 
   _Adj copyWith({
@@ -138,6 +141,7 @@ class _Adj {
     double? focus,
     double? fx,
     double? fy,
+    double? angle,
   }) {
     return _Adj(
       bright: bright ?? this.bright,
@@ -153,8 +157,60 @@ class _Adj {
       focus: focus ?? this.focus,
       fx: fx ?? this.fx,
       fy: fy ?? this.fy,
+      angle: angle ?? this.angle,
     );
   }
+}
+
+const List<String> _emojis = [
+  '😀', '😂', '😍', '🥰', '😎', '🤩', '😭', '😡', '👍', '👏',
+  '🙏', '💪', '🔥', '✨', '⭐', '❤️', '💜', '💙', '🎉', '🎈',
+  '🌸', '🌈', '☀️', '🌙', '🍕', '🎵', '📸', '👑', '💎', '🦋',
+];
+
+// Parmakla çizilen bir çizgi. Noktalar 0..1 arası.
+class _Stroke {
+  final List<Offset> pts;
+  final Color color;
+  final double width; // genişliğin oranı
+  _Stroke(this.pts, this.color, this.width);
+}
+
+class _StrokePainter extends CustomPainter {
+  final List<_Stroke> Function() get;
+  _StrokePainter(this.get, Listenable tick) : super(repaint: tick);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (final s in get()) {
+      final w = s.width * size.width;
+      if (s.pts.length == 1) {
+        canvas.drawCircle(
+          Offset(s.pts[0].dx * size.width, s.pts[0].dy * size.height),
+          w / 2,
+          Paint()..color = s.color,
+        );
+        continue;
+      }
+      final path = Path()
+        ..moveTo(s.pts[0].dx * size.width, s.pts[0].dy * size.height);
+      for (var i = 1; i < s.pts.length; i++) {
+        path.lineTo(s.pts[i].dx * size.width, s.pts[i].dy * size.height);
+      }
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = s.color
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round
+          ..strokeWidth = w,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _StrokePainter old) => true;
 }
 
 // Geri al / ileri al için tüm durumun kopyası.
@@ -169,8 +225,9 @@ class _Snap {
   final bool fh;
   final bool fv;
   final List<_TextItem> texts;
+  final List<_Stroke> strokes;
   const _Snap(this.adj, this.filter, this.turns, this.crop, this.frame,
-      this.cropN, this.lock, this.fh, this.fv, this.texts);
+      this.cropN, this.lock, this.fh, this.fv, this.texts, this.strokes);
 }
 
 const List<double> _idM = [
@@ -313,7 +370,11 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
   final TextEditingController _tc = TextEditingController();
   final List<_Snap> _undo = [];
   final List<_Snap> _redo = [];
-  int _sel = -1; // seçili yazı
+  int _sel = -1; // seçili yazı / çıkartma
+  List<_Stroke> _strokes = <_Stroke>[];
+  final ValueNotifier<int> _tick = ValueNotifier<int>(0);
+  final ValueNotifier<double> _penW = ValueNotifier<double>(0.012);
+  Color _penColor = Colors.white;
   double? _aspect; // fotoğrafın en/boy oranı (döndürmeden)
   double? _lock; // kırpma oranı kilidi (null = serbest)
   Size? _boxSize;
@@ -354,13 +415,15 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
     _txt.dispose();
     _orig.dispose();
     _histV.dispose();
+    _tick.dispose();
+    _penW.dispose();
     _tc.dispose();
     super.dispose();
   }
 
   // ---- Geri al / ileri al ----
   _Snap _snap() => _Snap(_adj.value, _filter, _turns, _crop, _frame,
-      _cropN.value, _lock, _fh, _fv, _txt.value);
+      _cropN.value, _lock, _fh, _fv, _txt.value, List<_Stroke>.of(_strokes));
 
   void _checkpoint() {
     _undo.add(_snap());
@@ -379,7 +442,9 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
       _fh = s.fh;
       _fv = s.fv;
       _sel = -1;
+      _strokes = List<_Stroke>.of(s.strokes);
     });
+    _tick.value++;
     _adj.value = s.adj;
     _cropN.value = s.cropN;
     _txt.value = s.texts;
@@ -561,6 +626,19 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
     } else {
       content = _framed(a, sharpW, r, inner);
     }
+    final ra = _rotAspect;
+    if (a.angle != 0 && ra != null) {
+      final rad = a.angle * math.pi / 180;
+      final ar = r.width * ra / r.height;
+      final big = ar > 1 ? ar : 1 / ar;
+      final sc = math.cos(rad).abs() + math.sin(rad).abs() * big;
+      content = ClipRect(
+        child: Transform.rotate(
+          angle: rad,
+          child: Transform.scale(scale: sc, child: content),
+        ),
+      );
+    }
     if (_fh || _fv) {
       content = Transform.flip(flipX: _fh, flipY: _fv, child: content);
     }
@@ -603,6 +681,18 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
           child: content,
         );
       }
+    }
+    if (_mode == 7 || _strokes.isNotEmpty) {
+      content = Stack(
+        children: [
+          content,
+          Positioned.fill(
+            child: IgnorePointer(
+              child: CustomPaint(painter: _StrokePainter(() => _strokes, _tick)),
+            ),
+          ),
+        ],
+      );
     }
     final texts = _txt.value;
     if (texts.isNotEmpty) {
@@ -788,8 +878,10 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
     return LayoutBuilder(
       builder: (context, cons) {
         if (_mode == 2 && _aspect != null) return _cropEditor(cons);
-        final void Function(Offset)? tap =
-            _mode == 3 ? _setFocus : (_mode == 5 ? _moveText : null);
+        final void Function(Offset)? tap = _mode == 3
+            ? _setFocus
+            : (_mode == 5 || _mode == 6 ? _moveText : null);
+        final bool draw = _mode == 7;
         return GestureDetector(
           onTapDown: tap == null
               ? null
@@ -797,8 +889,14 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
                   _checkpoint();
                   tap(d.localPosition);
                 },
-          onPanStart: tap == null ? null : (d) => _checkpoint(),
-          onPanUpdate: tap == null ? null : (d) => tap(d.localPosition),
+          onPanStart: draw
+              ? _drawStart
+              : (tap == null ? null : (DragStartDetails d) => _checkpoint()),
+          onPanUpdate: draw
+              ? _drawMove
+              : (tap == null
+                  ? null
+                  : (DragUpdateDetails d) => tap(d.localPosition)),
           child: RepaintBoundary(
             key: _key,
             child: ListenableBuilder(
@@ -830,7 +928,9 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
       _sel = -1;
       _cropN.value = _fullRect;
       _txt.value = const <_TextItem>[];
+      _strokes = <_Stroke>[];
     });
+    _tick.value++;
     _tc.clear();
     _runProc();
   }
@@ -980,6 +1080,7 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
     required ValueChanged<double> onChanged,
     VoidCallback? onStart,
     VoidCallback? onEnd,
+    double snap = 4,
   }) {
     final isZero = value.round() == zero.round();
     final sign = centered && value.round() > 0 ? '+' : '';
@@ -1011,7 +1112,7 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
                     onChangeEnd: (_) => onEnd?.call(),
                     onChanged: (v) {
                       var r = v.roundToDouble();
-                      if ((r - zero).abs() < 4) r = zero;
+                      if ((r - zero).abs() < snap) r = zero;
                       onChanged(r);
                     },
                   ),
@@ -1049,13 +1150,16 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
     _Adj Function(_Adj a, double v) set, {
     bool centered = true,
     bool proc = false,
+    double max = 100,
+    double snap = 4,
   }) {
     return _row(
       label: label,
       value: value,
       min: min,
-      max: 100,
+      max: max,
       zero: 0,
+      snap: snap,
       centered: centered,
       onStart: _checkpoint,
       onEnd: proc ? _runProc : null,
@@ -1071,6 +1175,8 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
         builder: (context, a, _) {
           return ListView(
             children: [
+              _adjRow('Açı', a.angle, -15, (x, v) => x.copyWith(angle: v),
+                  max: 15, snap: 1),
               _adjRow('Parlaklık', a.bright, -100,
                   (x, v) => x.copyWith(bright: v)),
               _adjRow('Kontrast', a.contrast, -100,
@@ -1311,6 +1417,193 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
     );
   }
 
+  // ---- Çıkartma / emoji ----
+  void _addSticker(String e) {
+    _checkpoint();
+    final l = List<_TextItem>.of(_txt.value)
+      ..add(_TextItem(text: e, size: 0.2));
+    _txt.value = l;
+    setState(() => _sel = l.length - 1);
+  }
+
+  Widget _stickerPanel() {
+    return SizedBox(
+      height: 200,
+      child: ValueListenableBuilder<List<_TextItem>>(
+        valueListenable: _txt,
+        builder: (context, list, _) {
+          final has = _sel >= 0 && _sel < list.length;
+          final cur = has ? list[_sel] : null;
+          return ListView(
+            children: [
+              SizedBox(
+                height: 56,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  itemCount: _emojis.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: 10),
+                  itemBuilder: (context, i) => GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => _addSticker(_emojis[i]),
+                    child: Center(
+                      child:
+                          Text(_emojis[i], style: const TextStyle(fontSize: 30)),
+                    ),
+                  ),
+                ),
+              ),
+              if (list.isNotEmpty)
+                _chips(
+                  [for (final t in list) t.text.isEmpty ? '(boş)' : t.text],
+                  _sel,
+                  (i) => setState(() => _sel = i),
+                  height: 48,
+                ),
+              _row(
+                label: 'Boyut',
+                value: (cur?.size ?? 0.2) * 100,
+                min: 4,
+                max: 50,
+                zero: -1000,
+                centered: false,
+                onStart: _checkpoint,
+                onChanged: (v) => _upd((t) => t.copyWith(size: v / 100)),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 8, 8),
+                child: Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'Seçili olanın yerini değiştirmek için fotoğrafa dokun veya sürükle',
+                        style:
+                            TextStyle(fontSize: 12, color: AppColors.textDim),
+                      ),
+                    ),
+                    if (has)
+                      GestureDetector(
+                        onTap: _deleteText,
+                        child: const Padding(
+                          padding: EdgeInsets.all(10),
+                          child: Icon(Icons.delete_outline),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  // ---- Çizim ----
+  Offset? _norm(Offset p) {
+    final size = _key.currentContext?.size;
+    if (size == null || size.width == 0 || size.height == 0) return null;
+    return Offset(p.dx / size.width, p.dy / size.height);
+  }
+
+  void _drawStart(DragStartDetails d) {
+    final n = _norm(d.localPosition);
+    if (n == null) return;
+    _checkpoint();
+    _strokes.add(_Stroke([n], _penColor, _penW.value));
+    _tick.value++;
+  }
+
+  void _drawMove(DragUpdateDetails d) {
+    final n = _norm(d.localPosition);
+    if (n == null || _strokes.isEmpty) return;
+    _strokes.last.pts.add(n);
+    _tick.value++;
+  }
+
+  void _clearStrokes() {
+    if (_strokes.isEmpty) return;
+    _checkpoint();
+    setState(() => _strokes = <_Stroke>[]);
+    _tick.value++;
+  }
+
+  Widget _drawPanel() {
+    return SizedBox(
+      height: 176,
+      child: ValueListenableBuilder<double>(
+        valueListenable: _penW,
+        builder: (context, w, _) {
+          return Column(
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
+                child: Text(
+                  'Fotoğraf üstüne parmakla çiz',
+                  style: TextStyle(fontSize: 12, color: AppColors.textDim),
+                ),
+              ),
+              SizedBox(
+                height: 44,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  itemCount: _palette.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: 12),
+                  itemBuilder: (context, i) {
+                    final c = _palette[i];
+                    return Center(
+                      child: GestureDetector(
+                        onTap: () => setState(() => _penColor = c),
+                        child: Container(
+                          width: 30,
+                          height: 30,
+                          decoration: BoxDecoration(
+                            color: c,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: _penColor == c
+                                  ? AppColors.blue
+                                  : Colors.white24,
+                              width: 2,
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              _row(
+                label: 'Kalınlık',
+                value: w * 500,
+                min: 1,
+                max: 20,
+                zero: -1000,
+                centered: false,
+                onChanged: (v) => _penW.value = v / 500,
+              ),
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: _clearStrokes,
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                  child: Row(
+                    children: [
+                      Icon(Icons.delete_outline, size: 20),
+                      SizedBox(width: 6),
+                      Text('Çizimleri temizle', style: TextStyle(fontSize: 13)),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
   Widget _panel() {
     switch (_mode) {
       case 0:
@@ -1323,8 +1616,12 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
         return _portraitPanel();
       case 4:
         return _framePanel();
-      default:
+      case 5:
         return _textPanel();
+      case 6:
+        return _stickerPanel();
+      default:
+        return _drawPanel();
     }
   }
 
@@ -1398,6 +1695,10 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
 
   void _setMode(int m) {
     FocusManager.instance.primaryFocus?.unfocus();
+    if (m == 5) {
+      final l = _txt.value;
+      _tc.text = (_sel >= 0 && _sel < l.length) ? l[_sel].text : '';
+    }
     setState(() => _mode = m);
   }
 
@@ -1430,6 +1731,9 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
           _tool(Icons.tune, 'Ayarlar', () => _setMode(1), _mode == 1),
           _tool(Icons.blur_on, 'Portre', () => _setMode(3), _mode == 3),
           _tool(Icons.text_fields, 'Yazı', () => _setMode(5), _mode == 5),
+          _tool(Icons.emoji_emotions_outlined, 'Çıkartma', () => _setMode(6),
+              _mode == 6),
+          _tool(Icons.brush, 'Çizim', () => _setMode(7), _mode == 7),
           _tool(Icons.filter_frames_outlined, 'Çerçeve', () => _setMode(4),
               _mode == 4),
           _tool(Icons.restart_alt, 'Sıfırla', _resetAll, false),
