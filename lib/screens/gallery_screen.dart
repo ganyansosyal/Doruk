@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../theme.dart';
+import 'edit_photo_screen.dart';
 
 class GalleryScreen extends StatefulWidget {
   const GalleryScreen({super.key});
@@ -26,10 +27,18 @@ class _GalleryScreenState extends State<GalleryScreen> {
     }
   }
 
-  void _open() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Düzenleme yakında')),
-    );
+  void _open(XFile file) {
+    if (_tab == 0) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+            builder: (_) => EditPhotoScreen(path: file.path)),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Video düzenleme yakında')),
+      );
+    }
   }
 
   Widget _tabButton(String text, int index) {
@@ -92,7 +101,7 @@ class _GalleryScreenState extends State<GalleryScreen> {
                         itemBuilder: (context, i) {
                           final file = items[i];
                           return GestureDetector(
-                            onTap: _open,
+                            onTap: () => _open(file),
                             child: ClipRRect(
                               borderRadius: BorderRadius.circular(12),
                               child: _tab == 0
