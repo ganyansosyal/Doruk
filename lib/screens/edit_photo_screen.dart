@@ -1427,6 +1427,33 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
     setState(() => _sel = l.length - 1);
   }
 
+  // Yazıyı pencerede düzenle (klavye ekranı kaydırmasın diye)
+  Future<void> _editTextDialog() async {
+    final list = _txt.value;
+    if (_sel < 0 || _sel >= list.length) return;
+    _checkpoint();
+    final c = TextEditingController(text: list[_sel].text);
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Yazı'),
+        content: TextField(
+          controller: c,
+          autofocus: true,
+          onChanged: (v) => _upd((t) => t.copyWith(text: v)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Tamam'),
+          ),
+        ],
+      ),
+    );
+    final l = _txt.value;
+    if (_sel >= 0 && _sel < l.length) _tc.text = l[_sel].text;
+  }
+
   void _deleteText() {
     final list = _txt.value;
     if (_sel < 0 || _sel >= list.length) return;
@@ -1455,9 +1482,10 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
                       child: TextField(
                         controller: _tc,
                         enabled: has,
-                        onChanged: (v) => _upd((t) => t.copyWith(text: v)),
+                        readOnly: true,
+                        onTap: _editTextDialog,
                         decoration: InputDecoration(
-                          hintText: has ? 'Yazını yaz (yeri: fotoğrafa dokun)' : 'Önce Ekle\'ye bas',
+                          hintText: has ? 'Yazıyı değiştirmek için dokun' : 'Önce Ekle\'ye bas',
                           isDense: true,
                           filled: true,
                           fillColor: AppColors.card,
@@ -1891,8 +1919,8 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
   @override
   Widget build(BuildContext context) {
     _built = true;
-    final kb = MediaQuery.of(context).viewInsets.bottom > 0;
     return Scaffold(
+      resizeToAvoidBottomInset: false,
       appBar: AppBar(
         title: const Text('Fotoğraf Düzenle'),
         backgroundColor: AppColors.bg,
@@ -1907,7 +1935,7 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            if (!kb) _historyBar(),
+            _historyBar(),
             Expanded(
               child: Center(
                 child: Padding(
@@ -1917,7 +1945,7 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
               ),
             ),
             _panel(),
-            if (!kb) _toolRow(),
+            _toolRow(),
           ],
         ),
       ),
