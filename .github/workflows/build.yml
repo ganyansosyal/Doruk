@@ -24,6 +24,31 @@ jobs:
       - name: Uygulama adını EditPro yap
         run: sed -i 's/android:label="[^"]*"/android:label="EditPro"/' android/app/src/main/AndroidManifest.xml
 
+      - name: Video köprüsünü ekle (Kotlin + Media3)
+        run: |
+          f=$(find android/app/src/main -name MainActivity.kt | head -n 1)
+          pkg=$(grep -m1 '^package ' "$f")
+          { echo "$pkg"; tail -n +2 android_overrides/MainActivity.kt; } > "$f"
+          if [ -f android/app/build.gradle.kts ]; then
+          cat >> android/app/build.gradle.kts <<'GRADLE'
+
+          dependencies {
+              implementation("androidx.media3:media3-transformer:1.5.1")
+              implementation("androidx.media3:media3-effect:1.5.1")
+              implementation("androidx.media3:media3-common:1.5.1")
+          }
+          GRADLE
+          else
+          cat >> android/app/build.gradle <<'GRADLE'
+
+          dependencies {
+              implementation 'androidx.media3:media3-transformer:1.5.1'
+              implementation 'androidx.media3:media3-effect:1.5.1'
+              implementation 'androidx.media3:media3-common:1.5.1'
+          }
+          GRADLE
+          fi
+
       - name: ImageMagick kur
         run: sudo apt-get update && sudo apt-get install -y imagemagick
 
