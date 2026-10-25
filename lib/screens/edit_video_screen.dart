@@ -1,5 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:gal/gal.dart';
 import 'package:video_player/video_player.dart';
 import '../theme.dart';
 
@@ -38,6 +40,12 @@ class _EditVideoScreenState extends State<EditVideoScreen> {
   bool _error = false;
   bool _dragging = false;
   int _sel = -1;
+  static const _ch = MethodChannel('editpro/video');
+  final _exp = ValueNotifier<int>(0); // 0 yok, 1 kalite, 2 kaydediyor, 3 bitti
+  final _prog = ValueNotifier<double>(0);
+  final _qual = ValueNotifier<int>(720);
+  final _enh = ValueNotifier<bool>(true);
+  String _msg = '';
 
   int get _dur => _c.value.duration.inMilliseconds;
 
@@ -63,6 +71,11 @@ class _EditVideoScreenState extends State<EditVideoScreen> {
     _rev.dispose();
     _ovr.dispose();
     _tc.dispose();
+    _exp.dispose();
+    _prog.dispose();
+    _qual.dispose();
+    _enh.dispose();
+    _ch.setMethodCallHandler(null);
     super.dispose();
   }
 
@@ -142,6 +155,183 @@ class _EditVideoScreenState extends State<EditVideoScreen> {
       if (c.text.isNotEmpty && ms >= c.start && ms < c.end) return c.text;
     }
     return '';
+  }
+
+  Future<void> _startExport() async {
+    _c.pause();
+    _prog.value = 0;
+    _exp.value = 2;
+    _ch.setMethodCallHandler((call) async {
+      if (call.method == 'progress') {
+        _prog.value = (call.arguments as num).toDouble();
+      }
+    });
+    try {
+      final out = await _ch.invokeMethod<String>('export', {
+        'path': widget.path,
+        'height': _qual.value,
+        'enhance': _enh.value,
+        'caps': [
+          for (final c in _caps)
+            if (c.text.trim().isNotEmpty)
+              {'text': c.text.trim(), 'start': c.start, 'end': c.end}
+        ],
+      });
+      await Gal.putVideo(out!, album: 'EditPro');
+      try {
+        File(out).deleteSync();
+      } catch (_) {}
+      _msg = 'Galeriye kaydedildi (EditPro albümü)';
+    } catch (e) {
+      _msg = 'Hata: $e';
+    }
+    if (mounted) _exp.value = 3;
+  }
+
+  Widget _qChip(String label, int h) {
+    return ValueListenableBuilder<int>(
+      valueListenable: _qual,
+      builder: (context, q, _) {
+        final sel = q == h;
+        return GestureDetector(
+          onTap: () => _qual.value = h,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(10),
+              color: sel ? null : AppColors.bg,
+              gradient: sel ? appGradient : null,
+            ),
+            child: Text(label,
+                style: const TextStyle(fontWeight: FontWeight.w600)),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _exportPanel(int s) {
+    Widget body;
+    if (s == 1) {
+      body = Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text('Video Kalitesi',
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
+          const SizedBox(height: 14),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _qChip('720p', 720),
+              const SizedBox(width: 8),
+              _qChip('1080p', 1080),
+              const SizedBox(width: 8),
+              _qChip('2K', 1440),
+            ],
+          ),
+          const SizedBox(height: 12),
+          ValueListenableBuilder<bool>(
+            valueListenable: _enh,
+            builder: (context, on, _) => GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => _enh.value = !on,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(on ? Icons.check_box : Icons.check_box_outline_blank,
+                      color: on ? AppColors.blue : AppColors.textDim),
+                  const SizedBox(width: 8),
+                  const Text('HD iyileştirme (renk + netlik)'),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            'MP4. Video seçtiğin çözünürlüğe büyütülür. 2K’yı her telefon desteklemeyebilir.',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 12, color: AppColors.textDim),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: TextButton(
+                  onPressed: () => _exp.value = 0,
+                  child: const Text('İptal'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: GestureDetector(
+                  onTap: _startExport,
+                  child: Container(
+                    height: 44,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      gradient: appGradient,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Text('Kaydet',
+                        style: TextStyle(fontWeight: FontWeight.w600)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      );
+    } else if (s == 2) {
+      body = ValueListenableBuilder<double>(
+        valueListenable: _prog,
+        builder: (context, p, _) => Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Kaydediliyor...',
+                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
+            const SizedBox(height: 14),
+            LinearProgressIndicator(
+              value: p / 100,
+              color: AppColors.blue,
+              backgroundColor: AppColors.bg,
+            ),
+            const SizedBox(height: 8),
+            Text('%${p.toInt()}',
+                style: const TextStyle(color: AppColors.textDim)),
+            const SizedBox(height: 4),
+            const Text('Ekranı kapatma, bekle.',
+                style: TextStyle(fontSize: 12, color: AppColors.textDim)),
+          ],
+        ),
+      );
+    } else {
+      body = Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(_msg, textAlign: TextAlign.center),
+          const SizedBox(height: 14),
+          TextButton(
+            onPressed: () => _exp.value = 0,
+            child: const Text('Tamam'),
+          ),
+        ],
+      );
+    }
+    return Positioned.fill(
+      child: Container(
+        color: const Color(0xE60B1226),
+        alignment: Alignment.center,
+        padding: const EdgeInsets.all(24),
+        child: Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: AppColors.card,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: body,
+        ),
+      ),
+    );
   }
 
   Widget _video(double maxH) {
@@ -418,9 +608,8 @@ class _EditVideoScreenState extends State<EditVideoScreen> {
         actions: [
           TextButton(
             onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Dışa aktarma yakında')),
-              );
+              _c.pause();
+              _exp.value = 1;
             },
             child: const Text('Kaydet'),
           ),
@@ -431,12 +620,20 @@ class _EditVideoScreenState extends State<EditVideoScreen> {
             ? const Center(child: Text('Video açılamadı'))
             : !_ready
                 ? const Center(child: CircularProgressIndicator())
-                : Column(
-                    children: [
-                      _video(h * 0.34),
-                      _controls(),
-                      Expanded(child: _list()),
-                    ],
+                : ValueListenableBuilder<int>(
+                    valueListenable: _exp,
+                    builder: (context, s, _) => Stack(
+                      children: [
+                        Column(
+                          children: [
+                            _video(h * 0.34),
+                            _controls(),
+                            Expanded(child: _list()),
+                          ],
+                        ),
+                        if (s > 0) _exportPanel(s),
+                      ],
+                    ),
                   ),
       ),
     );
