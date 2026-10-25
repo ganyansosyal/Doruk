@@ -31,6 +31,7 @@ import androidx.media3.effect.Contrast
 import androidx.media3.effect.HslAdjustment
 import androidx.media3.effect.OverlayEffect
 import androidx.media3.effect.Presentation
+import androidx.media3.effect.TextureOverlay
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.DefaultEncoderFactory
 import androidx.media3.transformer.EditedMediaItem
@@ -242,7 +243,7 @@ class MainActivity : FlutterActivity() {
                 list.add(Contrast(0.12f))
                 list.add(HslAdjustment.Builder().adjustSaturation(18f).build())
             }
-            list.add(OverlayEffect(ImmutableList.of(SubtitleOverlay(caps, outW, outH))))
+            list.add(OverlayEffect(ImmutableList.of<TextureOverlay>(SubtitleOverlay(caps, outW, outH))))
             val effects = Effects(emptyList<AudioProcessor>(), list)
             val item = EditedMediaItem.Builder(MediaItem.fromUri(Uri.fromFile(File(path))))
                 .setEffects(effects)
