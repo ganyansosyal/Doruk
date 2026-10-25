@@ -21,18 +21,12 @@ class HomeScreen extends StatelessWidget {
     }
 
     final tiles = <_Tile>[
-      _Tile(Icons.image, 'Fotoğraf\nDüzenle', openGallery,
-          const Color(0xFFEC4899), const Color(0xFF8B5CF6)),
-      _Tile(Icons.videocam, 'Video\nDüzenle', openGallery,
-          const Color(0xFFF43F5E), const Color(0xFFD946EF)),
-      _Tile(Icons.text_fields, 'Metin\nEkle', null,
-          const Color(0xFF14B8A6), const Color(0xFF64748B)),
-      _Tile(Icons.dashboard_customize, 'Şablonlar', null,
-          const Color(0xFFEC4899), const Color(0xFF6366F1)),
-      _Tile(Icons.photo_camera, 'Kamera', null,
-          const Color(0xFF94A3B8), const Color(0xFF64748B)),
-      _Tile(Icons.photo_library, 'Galeri', openGallery,
-          const Color(0xFF10B981), const Color(0xFF14B8A6)),
+      _Tile('assets/ikon_foto.png', 'Fotoğraf\nDüzenle', openGallery),
+      _Tile('assets/ikon_video.png', 'Video\nDüzenle', openGallery),
+      _Tile('assets/ikon_metin.png', 'Metin\nEkle', null),
+      _Tile('assets/ikon_sablon.png', 'Şablonlar', null),
+      _Tile('assets/ikon_kamera.png', 'Kamera', null),
+      _Tile('assets/ikon_galeri.png', 'Galeri', openGallery),
     ];
 
     return SafeArea(
@@ -70,19 +64,8 @@ class HomeScreen extends StatelessWidget {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Container(
-                          width: 44,
-                          height: 44,
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(12),
-                            gradient: LinearGradient(
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                              colors: [t.c1, t.c2],
-                            ),
-                          ),
-                          child: Icon(t.icon, size: 26, color: Colors.white),
-                        ),
+                        Image.asset(t.asset,
+                            width: 48, height: 48, cacheWidth: 144),
                         const SizedBox(height: 8),
                         Text(t.label,
                             textAlign: TextAlign.center,
@@ -178,12 +161,10 @@ class HomeScreen extends StatelessWidget {
 }
 
 class _Tile {
-  final IconData icon;
+  final String asset;
   final String label;
   final VoidCallback? onTap;
-  final Color c1;
-  final Color c2;
-  _Tile(this.icon, this.label, this.onTap, this.c1, this.c2);
+  _Tile(this.asset, this.label, this.onTap);
 }
 
 class _Thumb extends StatelessWidget {
