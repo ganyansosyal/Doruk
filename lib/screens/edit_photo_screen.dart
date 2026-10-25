@@ -9,11 +9,13 @@ import '../theme.dart';
 class _CropItem {
   final String name;
   final double? ratio;
-  const _CropItem(this.name, this.ratio);
+  final bool free;
+  const _CropItem(this.name, this.ratio, [this.free = false]);
 }
 
 const List<_CropItem> _crops = [
   _CropItem('Orijinal', null),
+  _CropItem('Serbest', null, true),
   _CropItem('1:1', 1),
   _CropItem('4:3', 4 / 3),
   _CropItem('3:4', 3 / 4),
@@ -94,6 +96,48 @@ List<double> _satM(double s) {
   ];
 }
 
+double _cl(double v, double lo, double hi) => v < lo ? lo : (v > hi ? hi : v);
+
+const Rect _fullRect = Rect.fromLTRB(0, 0, 1, 1);
+
+class _CropPainter extends CustomPainter {
+  final ValueNotifier<Rect> n;
+  _CropPainter(this.n) : super(repaint: n);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final r = n.value;
+    final rect = Rect.fromLTRB(r.left * size.width, r.top * size.height,
+        r.right * size.width, r.bottom * size.height);
+    final path = Path()
+      ..fillType = PathFillType.evenOdd
+      ..addRect(Offset.zero & size)
+      ..addRect(rect);
+    canvas.drawPath(path, Paint()..color = const Color(0x99000000));
+    final line = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+    canvas.drawRect(rect, line);
+    final grid = Paint()
+      ..color = const Color(0x66FFFFFF)
+      ..strokeWidth = 1;
+    for (var i = 1; i <= 2; i++) {
+      final x = rect.left + rect.width * i / 3;
+      final y = rect.top + rect.height * i / 3;
+      canvas.drawLine(Offset(x, rect.top), Offset(x, rect.bottom), grid);
+      canvas.drawLine(Offset(rect.left, y), Offset(rect.right, y), grid);
+    }
+    final dot = Paint()..color = Colors.white;
+    for (final c in [rect.topLeft, rect.topRight, rect.bottomLeft, rect.bottomRight]) {
+      canvas.drawCircle(c, 9, dot);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _CropPainter old) => old.n != n;
+}
+
 class EditPhotoScreen extends StatefulWidget {
   final String path;
   const EditPhotoScreen({super.key, required this.path});
@@ -110,10 +154,37 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
   int _turns = 0;
   final GlobalKey _key = GlobalKey();
   final ValueNotifier<_Adj> _adj = ValueNotifier<_Adj>(const _Adj());
+  final ValueNotifier<Rect> _cropN = ValueNotifier<Rect>(_fullRect);
+  double? _aspect; // fotoğrafın en/boy oranı (döndürmeden)
+  double? _lock; // kırpma oranı kilidi (null = serbest)
+  Size? _boxSize;
+  int _drag = -1;
+  bool _built = false;
+
+  double? get _rotAspect {
+    final a = _aspect;
+    if (a == null) return null;
+    return _turns.isOdd ? 1 / a : a;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    final stream = ResizeImage(FileImage(File(widget.path)), width: 1600)
+        .resolve(ImageConfiguration.empty);
+    late ImageStreamListener l;
+    l = ImageStreamListener((info, _) {
+      _aspect = info.image.width / info.image.height;
+      if (_built && mounted) setState(() {});
+      stream.removeListener(l);
+    }, onError: (e, st) {});
+    stream.addListener(l);
+  }
 
   @override
   void dispose() {
     _adj.dispose();
+    _cropN.dispose();
     super.dispose();
   }
 
@@ -138,23 +209,61 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
     return _mulM(cb, _mulM(s, _mulM(temp, photoFilters[_filter].matrix)));
   }
 
-  Widget _framed(_Adj a, int cacheW) {
-    final photo = ColorFiltered(
-      colorFilter: ColorFilter.matrix(_matrix(a)),
-      child: Image.file(File(widget.path), cacheWidth: cacheW),
+  Widget _framed(_Adj a, int cacheW, Rect r, BoxConstraints cons) {
+    final matrix = ColorFilter.matrix(_matrix(a));
+    final asp = _aspect;
+    if (asp == null) {
+      return ColorFiltered(
+        colorFilter: matrix,
+        child: RotatedBox(
+          quarterTurns: _turns,
+          child: Image.file(File(widget.path), cacheWidth: cacheW),
+        ),
+      );
+    }
+    final rotA = _turns.isOdd ? 1 / asp : asp;
+    final ca = r.width * rotA / r.height;
+    var dw = cons.maxWidth;
+    var dh = dw / ca;
+    if (dh > cons.maxHeight) {
+      dh = cons.maxHeight;
+      dw = dh * ca;
+    }
+    final iw = dw / r.width;
+    final ih = dh / r.height;
+    final odd = _turns.isOdd;
+    final img = Image.file(
+      File(widget.path),
+      cacheWidth: cacheW,
+      width: odd ? ih : iw,
+      height: odd ? iw : ih,
+      fit: BoxFit.fill,
     );
-    final rotated = RotatedBox(quarterTurns: _turns, child: photo);
-    final ratio = _crops[_crop].ratio;
-    if (ratio == null) return rotated;
-    return AspectRatio(
-      aspectRatio: ratio,
+    return SizedBox(
+      width: dw,
+      height: dh,
       child: ClipRect(
-        child: FittedBox(fit: BoxFit.cover, child: rotated),
+        child: OverflowBox(
+          alignment: Alignment.topLeft,
+          minWidth: iw,
+          maxWidth: iw,
+          minHeight: ih,
+          maxHeight: ih,
+          child: Transform.translate(
+            offset: Offset(-r.left * iw, -r.top * ih),
+            child: ColorFiltered(
+              colorFilter: matrix,
+              child: RotatedBox(quarterTurns: _turns, child: img),
+            ),
+          ),
+        ),
       ),
     );
   }
 
-  Widget _composed(_Adj a) {
+  Widget _composed(_Adj a, BoxConstraints cons) {
+    final r = _cropN.value;
+    final sharpW = _cl(1600 / r.width, 1600, 3000).round();
     Widget content;
     if (a.blur > 0) {
       final sigma = a.blur / 100 * 14;
@@ -163,7 +272,7 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
         children: [
           ImageFiltered(
             imageFilter: ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
-            child: _framed(a, 600),
+            child: _framed(a, 600, r, cons),
           ),
           ShaderMask(
             blendMode: BlendMode.dstIn,
@@ -173,12 +282,12 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
               colors: const [Colors.black, Colors.black, Color(0x00000000)],
               stops: const [0.0, 0.6, 1.0],
             ).createShader(rect),
-            child: _framed(a, 1600),
+            child: _framed(a, sharpW, r, cons),
           ),
         ],
       );
     } else {
-      content = _framed(a, 1600);
+      content = _framed(a, sharpW, r, cons);
     }
     if (a.vignette > 0) {
       content = Stack(
@@ -209,22 +318,145 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
   void _setFocus(Offset p) {
     final size = _key.currentContext?.size;
     if (size == null || size.width == 0 || size.height == 0) return;
-    final x = (p.dx / size.width * 2 - 1).clamp(-1.0, 1.0);
-    final y = (p.dy / size.height * 2 - 1).clamp(-1.0, 1.0);
+    final x = _cl(p.dx / size.width * 2 - 1, -1, 1);
+    final y = _cl(p.dy / size.height * 2 - 1, -1, 1);
     _adj.value = _adj.value.copyWith(fx: x, fy: y);
   }
 
-  Widget _canvasArea() {
-    return GestureDetector(
-      onTapDown: _mode == 3 ? (d) => _setFocus(d.localPosition) : null,
-      onPanUpdate: _mode == 3 ? (d) => _setFocus(d.localPosition) : null,
-      child: RepaintBoundary(
-        key: _key,
-        child: ValueListenableBuilder<_Adj>(
-          valueListenable: _adj,
-          builder: (context, a, _) => _composed(a),
+  // ---- Kırpma ----
+  void _pickCrop(int i) {
+    final item = _crops[i];
+    final A = _rotAspect;
+    setState(() {
+      _crop = i;
+      if (item.name == 'Orijinal') {
+        _lock = null;
+        _cropN.value = _fullRect;
+      } else if (item.free) {
+        _lock = null;
+      } else if (item.ratio != null && A != null) {
+        final ratio = item.ratio!;
+        _lock = ratio;
+        double w;
+        double h;
+        if (ratio > A) {
+          w = 1;
+          h = A / ratio;
+        } else {
+          h = 1;
+          w = ratio / A;
+        }
+        _cropN.value = Rect.fromLTWH((1 - w) / 2, (1 - h) / 2, w, h);
+      }
+    });
+  }
+
+  void _cropStart(DragStartDetails d) {
+    final s = _boxSize;
+    if (s == null) return;
+    final r = _cropN.value;
+    final p = d.localPosition;
+    final corners = [
+      Offset(r.left * s.width, r.top * s.height),
+      Offset(r.right * s.width, r.top * s.height),
+      Offset(r.left * s.width, r.bottom * s.height),
+      Offset(r.right * s.width, r.bottom * s.height),
+    ];
+    _drag = -1;
+    for (var i = 0; i < 4; i++) {
+      if ((corners[i] - p).distance < 40) {
+        _drag = i;
+        return;
+      }
+    }
+    final px = Rect.fromLTRB(r.left * s.width, r.top * s.height,
+        r.right * s.width, r.bottom * s.height);
+    if (px.contains(p)) _drag = 4;
+  }
+
+  void _cropMove(DragUpdateDetails d) {
+    final s = _boxSize;
+    if (s == null || _drag < 0) return;
+    final dn = Offset(d.delta.dx / s.width, d.delta.dy / s.height);
+    final r = _cropN.value;
+    if (_drag == 4) {
+      final dx = _cl(dn.dx, -r.left, 1 - r.right);
+      final dy = _cl(dn.dy, -r.top, 1 - r.bottom);
+      _cropN.value = r.shift(Offset(dx, dy));
+      return;
+    }
+    final left = _drag == 0 || _drag == 2;
+    final top = _drag == 0 || _drag == 1;
+    final ax = left ? r.right : r.left;
+    final ay = top ? r.bottom : r.top;
+    final px = (left ? r.left : r.right) + dn.dx;
+    final py = (top ? r.top : r.bottom) + dn.dy;
+    final sx = px >= ax ? 1.0 : -1.0;
+    final sy = py >= ay ? 1.0 : -1.0;
+    final maxW = sx > 0 ? 1 - ax : ax;
+    final maxH = sy > 0 ? 1 - ay : ay;
+    const minS = 0.08;
+    var w = (px - ax).abs();
+    var h = (py - ay).abs();
+    final lock = _lock;
+    final A = _rotAspect;
+    if (lock != null && A != null) {
+      w = _cl(w, minS, maxW);
+      h = w * A / lock;
+      if (h > maxH) {
+        h = maxH;
+        w = h * lock / A;
+      }
+    } else {
+      w = _cl(w, minS, maxW);
+      h = _cl(h, minS, maxH);
+    }
+    final l = sx > 0 ? ax : ax - w;
+    final t = sy > 0 ? ay : ay - h;
+    _cropN.value = Rect.fromLTWH(l, t, w, h);
+  }
+
+  Widget _cropEditor(BoxConstraints cons) {
+    final base = _framed(_adj.value, 1600, _fullRect, cons);
+    return Stack(
+      children: [
+        base,
+        Positioned.fill(
+          child: LayoutBuilder(
+            builder: (context, bc) {
+              _boxSize = Size(bc.maxWidth, bc.maxHeight);
+              return GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onPanStart: _cropStart,
+                onPanUpdate: _cropMove,
+                child: CustomPaint(
+                  painter: _CropPainter(_cropN),
+                  size: Size.infinite,
+                ),
+              );
+            },
+          ),
         ),
-      ),
+      ],
+    );
+  }
+
+  Widget _canvasArea() {
+    return LayoutBuilder(
+      builder: (context, cons) {
+        if (_mode == 2 && _aspect != null) return _cropEditor(cons);
+        return GestureDetector(
+          onTapDown: _mode == 3 ? (d) => _setFocus(d.localPosition) : null,
+          onPanUpdate: _mode == 3 ? (d) => _setFocus(d.localPosition) : null,
+          child: RepaintBoundary(
+            key: _key,
+            child: ValueListenableBuilder<_Adj>(
+              valueListenable: _adj,
+              builder: (context, a, _) => _composed(a, cons),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -234,6 +466,8 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
       _filter = 0;
       _crop = 0;
       _turns = 0;
+      _lock = null;
+      _cropN.value = _fullRect;
     });
   }
 
@@ -243,6 +477,11 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
 
   Future<void> _save() async {
     if (_saving) return;
+    if (_key.currentContext == null) {
+      setState(() => _mode = 0);
+      await WidgetsBinding.instance.endOfFrame;
+    }
+    if (!mounted) return;
     setState(() => _saving = true);
     try {
       final boundary =
@@ -270,7 +509,7 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
           final selected = i == _crop;
           return Center(
             child: GestureDetector(
-              onTap: () => setState(() => _crop = i),
+              onTap: () => _pickCrop(i),
               child: Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
@@ -517,6 +756,7 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
 
   @override
   Widget build(BuildContext context) {
+    _built = true;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Fotoğraf Düzenle'),
@@ -548,7 +788,13 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
                 _tool(Icons.crop, 'Kırp',
                     () => setState(() => _mode = 2), _mode == 2),
                 _tool(Icons.rotate_right, 'Döndür',
-                    () => setState(() => _turns = (_turns + 1) % 4), false),
+                    () => setState(() {
+                          _turns = (_turns + 1) % 4;
+                          _cropN.value = _fullRect;
+                          _crop = 0;
+                          _lock = null;
+                        }),
+                    false),
                 _tool(Icons.filter_vintage_outlined, 'Filtre',
                     () => setState(() => _mode = 0), _mode == 0),
                 _tool(Icons.tune, 'Ayarlar',
