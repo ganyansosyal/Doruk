@@ -7,6 +7,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:gal/gal.dart';
+import 'package:google_mlkit_commons/google_mlkit_commons.dart';
+import 'package:google_mlkit_selfie_segmentation/google_mlkit_selfie_segmentation.dart';
 import '../filters.dart';
 import '../theme.dart';
 
@@ -110,6 +112,7 @@ class _Adj {
   final double fx; // -1..1 odak noktası
   final double fy; // -1..1
   final double angle; // -15..15 derece (açı düzeltme)
+  final bool auto; // portre: kişiyi otomatik bul
   const _Adj({
     this.bright = 0,
     this.contrast = 0,
@@ -125,6 +128,7 @@ class _Adj {
     this.fx = 0,
     this.fy = 0,
     this.angle = 0,
+    this.auto = false,
   });
 
   _Adj copyWith({
@@ -142,6 +146,7 @@ class _Adj {
     double? fx,
     double? fy,
     double? angle,
+    bool? auto,
   }) {
     return _Adj(
       bright: bright ?? this.bright,
@@ -158,6 +163,7 @@ class _Adj {
       fx: fx ?? this.fx,
       fy: fy ?? this.fy,
       angle: angle ?? this.angle,
+      auto: auto ?? this.auto,
     );
   }
 }
@@ -375,6 +381,8 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
   final ValueNotifier<int> _tick = ValueNotifier<int>(0);
   final ValueNotifier<double> _penW = ValueNotifier<double>(0.012);
   Color _penColor = Colors.white;
+  ui.Image? _mask; // kişi maskesi (alfa = kişi olasılığı)
+  bool _segBusy = false;
   double? _aspect; // fotoğrafın en/boy oranı (döndürmeden)
   double? _lock; // kırpma oranı kilidi (null = serbest)
   Size? _boxSize;
@@ -531,7 +539,8 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
     return _mulM(cb, _mulM(s, _mulM(temp, fm)));
   }
 
-  Widget _framed(_Adj a, int cacheW, Rect r, BoxConstraints cons) {
+  Widget _framed(_Adj a, int cacheW, Rect r, BoxConstraints cons,
+      {bool person = false}) {
     final matrix = ColorFilter.matrix(_matrix(a));
     final asp = _aspect;
     if (asp == null) {
@@ -555,20 +564,50 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
     final ih = dh / r.height;
     final odd = _turns.isOdd;
     final proc = _procImg;
-    final Widget img = proc != null
-        ? RawImage(
-            image: proc,
-            width: odd ? ih : iw,
-            height: odd ? iw : ih,
-            fit: BoxFit.fill,
-          )
+    final bw = odd ? ih : iw;
+    final bh = odd ? iw : ih;
+    Widget mk(int cw) => proc != null
+        ? RawImage(image: proc, width: bw, height: bh, fit: BoxFit.fill)
         : Image.file(
             File(widget.path),
-            cacheWidth: cacheW,
-            width: odd ? ih : iw,
-            height: odd ? iw : ih,
+            cacheWidth: cw,
+            width: bw,
+            height: bh,
             fit: BoxFit.fill,
           );
+    final mask = _mask;
+    Widget img;
+    if (person && mask != null && a.blur > 0) {
+      final sigma = a.blur / 100 * 14;
+      img = Stack(
+        children: [
+          ImageFiltered(
+            imageFilter: ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+            child: mk(600),
+          ),
+          ShaderMask(
+            blendMode: BlendMode.dstIn,
+            shaderCallback: (rect) {
+              final m = Float64List(16);
+              m[0] = rect.width / mask.width;
+              m[5] = rect.height / mask.height;
+              m[10] = 1;
+              m[15] = 1;
+              return ui.ImageShader(
+                mask,
+                TileMode.clamp,
+                TileMode.clamp,
+                m,
+                filterQuality: FilterQuality.medium,
+              );
+            },
+            child: mk(cacheW),
+          ),
+        ],
+      );
+    } else {
+      img = mk(cacheW);
+    }
     return SizedBox(
       width: dw,
       height: dh,
@@ -602,7 +641,9 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
         : cons.deflate(EdgeInsets.all(pad));
     final sharpW = _cl(1600 / r.width, 1600, 3000).round();
     Widget content;
-    if (a.blur > 0) {
+    if (a.blur > 0 && a.auto && _mask != null) {
+      content = _framed(a, sharpW, r, inner, person: true);
+    } else if (a.blur > 0) {
       final sigma = a.blur / 100 * 14;
       final radius = 0.15 + a.focus / 100 * 0.6;
       content = Stack(
@@ -879,7 +920,7 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
       builder: (context, cons) {
         if (_mode == 2 && _aspect != null) return _cropEditor(cons);
         final void Function(Offset)? tap = _mode == 3
-            ? _setFocus
+            ? (_adj.value.auto ? null : _setFocus)
             : (_mode == 5 || _mode == 6 ? _moveText : null);
         final bool draw = _mode == 7;
         return GestureDetector(
@@ -1202,19 +1243,90 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
     );
   }
 
+  // Kişiyi ML Kit ile bulup maske çıkarır.
+  Future<void> _segment() async {
+    setState(() => _segBusy = true);
+    var ok = false;
+    try {
+      final bytes = await File(widget.path).readAsBytes();
+      final codec = await ui.instantiateImageCodec(bytes, targetWidth: 640);
+      final fr = await codec.getNextFrame();
+      final small = fr.image;
+      final png = await small.toByteData(format: ui.ImageByteFormat.png);
+      small.dispose();
+      codec.dispose();
+      final f = File('${Directory.systemTemp.path}/seg.png');
+      await f.writeAsBytes(png!.buffer.asUint8List());
+      final seg = SelfieSegmenter(
+        mode: SegmenterMode.single,
+        enableRawSizeMask: false,
+      );
+      final m = await seg.processImage(InputImage.fromFilePath(f.path));
+      await seg.close();
+      if (m != null && m.confidences.length == m.width * m.height) {
+        final px = Uint8List(m.width * m.height * 4);
+        for (var i = 0; i < m.confidences.length; i++) {
+          final t = ((m.confidences[i] - 0.3) / 0.4).clamp(0.0, 1.0).toDouble();
+          px[i * 4] = 255;
+          px[i * 4 + 1] = 255;
+          px[i * 4 + 2] = 255;
+          px[i * 4 + 3] = (t * t * (3 - 2 * t) * 255).round();
+        }
+        final c = Completer<ui.Image>();
+        ui.decodeImageFromPixels(
+            px, m.width, m.height, ui.PixelFormat.rgba8888, c.complete);
+        final im = await c.future;
+        if (mounted) _mask = im;
+        ok = true;
+      }
+    } catch (e) {
+      ok = false;
+    }
+    if (!mounted) return;
+    if (!ok) {
+      _adj.value = _adj.value.copyWith(auto: false);
+      _snack('Kişi bulunamadı');
+    }
+    setState(() => _segBusy = false);
+  }
+
   Widget _portraitPanel() {
     return SizedBox(
-      height: 176,
+      height: 200,
       child: ValueListenableBuilder<_Adj>(
         valueListenable: _adj,
         builder: (context, a, _) {
+          final hint = !a.auto
+              ? 'Fotoğrafa dokun veya sürükle: odak noktası'
+              : (_segBusy
+                  ? 'Kişi aranıyor...'
+                  : 'Kişi otomatik bulundu, arka plan bulanıklaşır');
           return Column(
             children: [
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
-                child: Text(
-                  'Fotoğrafa dokun veya sürükle: odak noktası',
-                  style: TextStyle(fontSize: 12, color: AppColors.textDim),
+              _chips(
+                const ['Elle odak', 'Otomatik (kişi)'],
+                a.auto ? 1 : 0,
+                (i) {
+                  _checkpoint();
+                  if (i == 1) {
+                    _adj.value = _adj.value
+                        .copyWith(auto: true, blur: a.blur == 0 ? 50 : a.blur);
+                    if (_mask == null && !_segBusy) _segment();
+                  } else {
+                    _adj.value = _adj.value.copyWith(auto: false);
+                  }
+                },
+                height: 56,
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    hint,
+                    style: const TextStyle(
+                        fontSize: 12, color: AppColors.textDim),
+                  ),
                 ),
               ),
               _row(
@@ -1227,16 +1339,17 @@ class _EditPhotoScreenState extends State<EditPhotoScreen> {
                 onStart: _checkpoint,
                 onChanged: (v) => _adj.value = _adj.value.copyWith(blur: v),
               ),
-              _row(
-                label: 'Odak alanı',
-                value: a.focus,
-                min: 0,
-                max: 100,
-                zero: 50,
-                centered: false,
-                onStart: _checkpoint,
-                onChanged: (v) => _adj.value = _adj.value.copyWith(focus: v),
-              ),
+              if (!a.auto)
+                _row(
+                  label: 'Odak alanı',
+                  value: a.focus,
+                  min: 0,
+                  max: 100,
+                  zero: 50,
+                  centered: false,
+                  onStart: _checkpoint,
+                  onChanged: (v) => _adj.value = _adj.value.copyWith(focus: v),
+                ),
             ],
           );
         },
