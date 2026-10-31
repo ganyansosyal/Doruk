@@ -1,11 +1,9 @@
 # .github/workflows/build.yml
-# Her push'ta ve elle tetiklenince Android APK üretir.
+# Sadece elle tetiklenince Android APK üretir (Actions > Run workflow).
 
 name: APK Derle
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 jobs:
