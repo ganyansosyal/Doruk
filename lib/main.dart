@@ -17,6 +17,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import 'screens/battle_screen.dart';
 import 'screens/main_menu_screen.dart';
 
 // -----------------------------------------------------------------------------
@@ -119,7 +120,7 @@ class KartSavasiApp extends StatelessWidget {
       initialRoute: AppRoutes.anaMenu,
       routes: {
         AppRoutes.anaMenu: (_) => const MainMenuScreen(),
-        AppRoutes.savas: (_) => const _BosEkran(baslik: 'Savaş Arenası'),
+        AppRoutes.savas: (_) => const BattleScreen(),
         AppRoutes.deste: (_) => const _BosEkran(baslik: 'Deste'),
         AppRoutes.magaza: (_) => const _BosEkran(baslik: 'Mağaza'),
         AppRoutes.gorevler: (_) => const _BosEkran(baslik: 'Görevler'),
