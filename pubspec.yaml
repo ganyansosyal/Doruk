@@ -38,3 +38,4 @@ flutter:
   # Görseller ve sesler eklendiğinde aşağıdaki satırları açın:
   assets:
     - assets/images/
+    - assets/audio/
