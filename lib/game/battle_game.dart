@@ -12,6 +12,8 @@ import 'package:flame/components.dart';
 import 'package:flame/effects.dart';
 import 'package:flame/events.dart';
 import 'package:flame/game.dart';
+import 'package:flame/particles.dart';
+import 'package:flame_audio/flame_audio.dart';
 import 'package:flutter/material.dart';
 
 // ----------------------------------------------------------------------------
@@ -23,6 +25,15 @@ const int kKahramanCan = 5000;
 const int kOdulAltin = 50;
 const int kSlotSayisi = 3;
 const int kElBoyutu = 4;
+
+/// Ses çal. Dosya yoksa oyun çökmesin diye hata yutulur.
+void _ses(String dosya, {double ses = 0.8}) {
+  Future(() async {
+    try {
+      await FlameAudio.play(dosya, volume: ses);
+    } catch (_) {}
+  });
+}
 
 // ----------------------------------------------------------------------------
 // KART VERİSİ
@@ -291,6 +302,7 @@ class BattleGame extends FlameGame {
   int rakipMana = 3;
   int maxMana = 3;
 
+  double _oyuncuBarY = 0;
   bool playerTurn = true;
   bool busy = false;
   bool ended = false;
@@ -333,7 +345,7 @@ class BattleGame extends FlameGame {
     // Yerleşim
     final w = size.x;
     final h = size.y;
-    final kw = w * 0.21;
+    final kw = w * 0.235;
     cardSize = Vector2(kw, kw * 1376 / 768);
 
     // Rakip çubukları (üst)
@@ -358,7 +370,9 @@ class BattleGame extends FlameGame {
     final bosluk = w * 0.04;
     final baslaX = (w - (kSlotSayisi * cardSize.x + (kSlotSayisi - 1) * bosluk)) / 2;
     final rakipY = 66.0;
-    final oyuncuY = rakipY + cardSize.y + 24;
+    final bosAlan = h - (rakipY + 3 * cardSize.y + 118);
+    final aralik = bosAlan.clamp(24.0, 90.0).toDouble();
+    final oyuncuY = rakipY + cardSize.y + aralik;
     for (var i = 0; i < kSlotSayisi; i++) {
       final x = baslaX + i * (cardSize.x + bosluk);
       final rs = SlotComponent(
@@ -373,6 +387,7 @@ class BattleGame extends FlameGame {
 
     // Turu bitir butonu
     final butonY = oyuncuY + cardSize.y + 10;
+    _oyuncuBarY = butonY + 56;
     add(GameButton(
       etiket: () => (playerTurn && !busy) ? 'TURU BİTİR' : 'RAKİP OYNUYOR...',
       aktif: () => playerTurn && !busy && !ended,
@@ -410,6 +425,8 @@ class BattleGame extends FlameGame {
     for (var i = 0; i < 3; i++) {
       kartCek();
     }
+    _afis('SAVAŞ BAŞLIYOR!', Colors.amber);
+    _ses('turn.wav', ses: 0.6);
   }
 
   // --------------------------------------------------------------------------
@@ -430,7 +447,8 @@ class BattleGame extends FlameGame {
     )..handPos = hedef;
     add(k);
     el[i] = k;
-    k.add(MoveToEffect(hedef, EffectController(duration: 0.3)));
+    k.add(MoveToEffect(hedef, EffectController(duration: 0.3, curve: Curves.easeOut)));
+    _ses('draw.wav', ses: 0.5);
   }
 
   // --------------------------------------------------------------------------
@@ -469,7 +487,19 @@ class BattleGame extends FlameGame {
     slot.card = k;
     k.placed = true;
     k.priority = 5;
-    k.add(MoveToEffect(slot.position.clone(), EffectController(duration: 0.15)));
+    k.add(MoveToEffect(
+      slot.position.clone(),
+      EffectController(duration: 0.18, curve: Curves.easeOut),
+      onComplete: () {
+        if (durdu) return;
+        _parcacik(slot.position + Vector2(cardSize.x / 2, cardSize.y),
+            const Color(0xFFFFC107),
+            adet: 16, hiz: 220);
+        k.add(ScaleEffect.to(
+            Vector2.all(1.12), EffectController(duration: 0.08, alternate: true)));
+        _ses('place.wav');
+      },
+    ));
   }
 
   // --------------------------------------------------------------------------
@@ -482,7 +512,8 @@ class BattleGame extends FlameGame {
 
     await _saldiriFazi(oyuncuSlotlari, rakipSlotlari, true);
     if (durdu) return;
-    await Future.delayed(const Duration(milliseconds: 400));
+    _afis('RAKİBİN SIRASI', Colors.redAccent);
+    await Future.delayed(const Duration(milliseconds: 900));
 
     await _rakipOyna();
     if (durdu) return;
@@ -494,6 +525,8 @@ class BattleGame extends FlameGame {
     oyuncuMana = maxMana;
     rakipMana = maxMana;
     kartCek();
+    _afis('SENİN SIRAN', Colors.amber);
+    _ses('turn.wav', ses: 0.6);
     playerTurn = true;
     busy = false;
   }
@@ -505,18 +538,24 @@ class BattleGame extends FlameGame {
       final a = saldiran[i].card;
       if (a == null) continue;
 
-      // Saldırı animasyonu (ileri atıl, geri dön)
-      a.add(MoveByEffect(Vector2(0, oyuncu ? -26 : 26),
-          EffectController(duration: 0.12, alternate: true)));
+      // Saldırı: kart öne atılır, geri döner
+      a.priority = 90;
+      a.add(MoveByEffect(
+          Vector2(0, oyuncu ? -44 : 44),
+          EffectController(
+              duration: 0.14, alternate: true, curve: Curves.easeIn)));
       await Future.delayed(const Duration(milliseconds: 150));
       if (durdu) return;
 
       final d = savunan[i].card;
       if (d != null) {
         d.hp -= a.atk;
-        _hasarYazisi(d.position + d.size / 2, a.atk);
+        final merkez = d.position + d.size / 2;
+        _vurusEfekti(merkez, d);
+        _hasarYazisi(merkez, a.atk);
         if (d.hp <= 0) {
           savunan[i].card = null;
+          _parcacik(merkez, Colors.white, adet: 26, hiz: 380);
           d.add(OpacityEffect.fadeOut(EffectController(duration: 0.25)));
           d.add(RemoveEffect(delay: 0.3));
         }
@@ -526,10 +565,15 @@ class BattleGame extends FlameGame {
         } else {
           oyuncuCan -= a.atk;
         }
-        _hasarYazisi(Vector2(size.x / 2, oyuncu ? 30 : size.y * 0.62), a.atk);
+        final hedef = Vector2(size.x / 2, oyuncu ? 30 : _oyuncuBarY);
+        _parcacik(hedef, Colors.redAccent, adet: 22, hiz: 340);
+        _ses('hit.wav');
+        if (!oyuncu) _kirmiziFlas();
+        _hasarYazisi(hedef, a.atk);
         if (_bittiMi()) return;
       }
       await Future.delayed(const Duration(milliseconds: 350));
+      a.priority = 5;
     }
   }
 
@@ -566,11 +610,75 @@ class BattleGame extends FlameGame {
       anchor: Anchor.center,
       position: konum,
       priority: 150,
-      textRenderer: _yazi(24, Colors.redAccent),
+      scale: Vector2.all(0.5),
+      textRenderer: _yazi(30, Colors.redAccent),
     );
     add(t);
-    t.add(MoveByEffect(Vector2(0, -40), EffectController(duration: 0.7)));
-    t.add(RemoveEffect(delay: 0.7));
+    t.add(ScaleEffect.to(Vector2.all(1.3),
+        EffectController(duration: 0.15, curve: Curves.easeOutBack)));
+    t.add(MoveByEffect(Vector2(0, -50), EffectController(duration: 0.8)));
+    t.add(RemoveEffect(delay: 0.8));
+  }
+
+  // Kartın vurulma efekti: kırmızı parlama, sarsılma, kıvılcım
+  void _vurusEfekti(Vector2 merkez, CardComponent d) {
+    _parcacik(merkez, const Color(0xFFFF9800), adet: 20, hiz: 320);
+    _ses('hit.wav');
+    d.add(ColorEffect(Colors.red,
+        EffectController(duration: 0.1, alternate: true),
+        opacityTo: 0.7));
+    d.add(MoveByEffect(Vector2(7, 0),
+        EffectController(duration: 0.04, alternate: true, repeatCount: 3)));
+  }
+
+  // Kıvılcım / toz parçacıkları
+  void _parcacik(Vector2 konum, Color renk,
+      {int adet = 18, double hiz = 260, int oncelik = 120}) {
+    add(ParticleSystemComponent(
+      position: konum,
+      priority: oncelik,
+      particle: Particle.generate(
+        count: adet,
+        lifespan: 0.6,
+        generator: (i) => AcceleratedParticle(
+          acceleration: Vector2(0, 260),
+          speed: Vector2((_rng.nextDouble() - 0.5) * hiz,
+              -_rng.nextDouble() * hiz),
+          child: CircleParticle(
+            radius: 2 + _rng.nextDouble() * 3,
+            paint: Paint()..color = renk,
+          ),
+        ),
+      ),
+    ));
+  }
+
+  // Ekran kırmızıya flaşlar (oyuncu hasar alınca)
+  void _kirmiziFlas() {
+    final f = RectangleComponent(
+      size: size.clone(),
+      paint: Paint()..color = const Color(0x55FF0000),
+      priority: 180,
+    );
+    add(f);
+    f.add(OpacityEffect.fadeOut(EffectController(duration: 0.35)));
+    f.add(RemoveEffect(delay: 0.4));
+  }
+
+  // Ortada büyüyerek çıkan duyuru yazısı
+  void _afis(String metin, Color renk) {
+    final t = TextComponent(
+      text: metin,
+      anchor: Anchor.center,
+      position: Vector2(size.x / 2, size.y * 0.45),
+      priority: 190,
+      scale: Vector2.all(0.3),
+      textRenderer: _yazi(34, renk),
+    );
+    add(t);
+    t.add(ScaleEffect.to(Vector2.all(1.0),
+        EffectController(duration: 0.25, curve: Curves.easeOutBack)));
+    t.add(RemoveEffect(delay: 1.0));
   }
 
   bool _bittiMi() {
@@ -590,6 +698,13 @@ class BattleGame extends FlameGame {
   void _bitir(bool kazandi) {
     if (ended) return;
     ended = true;
+    _ses(kazandi ? 'win.wav' : 'lose.wav');
+    if (kazandi) {
+      for (var j = 0; j < 5; j++) {
+        _parcacik(Vector2(size.x * (0.1 + 0.2 * j), size.y * 0.3), Colors.amber,
+            adet: 30, hiz: 500, oncelik: 210);
+      }
+    }
     add(RectangleComponent(
       size: size.clone(),
       paint: Paint()..color = const Color(0xCC000000),
