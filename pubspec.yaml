@@ -36,6 +36,5 @@ flutter:
   uses-material-design: true
 
   # Görseller ve sesler eklendiğinde aşağıdaki satırları açın:
-  # assets:
-  #   - assets/images/
-  #   - assets/audio/
+  assets:
+    - assets/images/
